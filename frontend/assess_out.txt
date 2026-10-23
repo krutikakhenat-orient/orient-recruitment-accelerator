@@ -1,6 +1,0 @@
-panel_login=True
-assignable_status=200 count=3
-target=Walk-in: Rohan_Kulkarni_Resume
-submit_status=201
-submit_body={'id': 'b78e1ba9-1927-42cf-bd61-24d73936e829', 'application_id': 'da12d4bc-1f6d-478a-b67d-a6b4cde5f00a', 'campaign_id': '3c81594b-f58f-4625-86cd-8878c2e2ed5a', 'panel_member_id': '474b9586-7a70-4e5a-9ab1-ee55085c504b', 'recommendation': 'proceed', 'conflict_declared': False}
-assignable_after=2

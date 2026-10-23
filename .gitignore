@@ -53,3 +53,6 @@ ginit.txt
 staged_all.txt
 staged_summary.txt
 staged.txt
+
+# Diagnostic test output accidentally committed (synthetic data, not source)
+frontend/assess_out.txt

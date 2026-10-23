@@ -1,0 +1,32 @@
+# Gitleaks configuration for Orient Recruitment Accelerator.
+#
+# Goal: keep EVERY default secret-scanning rule enabled so real credentials are still
+# caught, while exempting a tiny, explicit set of CLEARLY-SYNTHETIC test passwords that the
+# generic-api-key rule reports as false positives.
+#
+# What is exempted and why it is safe:
+#   - "CorrectHorseBatteryStaple1" and "AnotherStrongPassword12" are static, well-known
+#     example passwords used ONLY to construct in-memory test users in backend/tests/
+#     (verified: these literals appear in no application/production code). They are not tied
+#     to any real account, service, deployment, or environment and grant access to nothing.
+#     There is nothing to revoke or rotate.
+#
+# Scope: the allowlist matches ONLY these two exact literal strings. It does NOT exempt a
+# directory, a file type, or an entropy range, so ANY other secret — including a real one
+# accidentally committed to a test file — is still detected and fails the scan.
+#
+# Compatible with gitleaks v8 (the version run by gitleaks/gitleaks-action@v2 in CI); uses
+# the stable top-level [allowlist] schema with a `regexes` list.
+
+title = "Orient Recruitment Accelerator — gitleaks config"
+
+# Inherit the full default ruleset; we only ADD an allowlist, never remove or weaken a rule.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic, non-production example passwords used only in backend tests."
+regexes = [
+  '''CorrectHorseBatteryStaple1''',
+  '''AnotherStrongPassword12''',
+]
