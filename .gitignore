@@ -43,6 +43,9 @@ Thumbs.db
 *.db
 backend/local_dev.sqlite3
 
+# Local dev object store (persisted uploaded files — may contain candidate data)
+backend/local_dev_objectstore/
+
 # Generated test/demo artifacts (synthetic JD + resume pack)
 jd_pack/
 orient_jd_screening_pack/

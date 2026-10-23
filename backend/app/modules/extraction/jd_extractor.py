@@ -325,11 +325,21 @@ _GAZETTEER: tuple[str, ...] = (
     "Flask", "FastAPI", "SQL", "MySQL", "PostgreSQL", "Oracle", "MongoDB", "Redis", "Kafka",
     "REST", "REST APIs", "GraphQL", "Power BI", "Tableau", "Excel",
     # IT support / desktop
-    "Troubleshooting", "Hardware", "Software Installation", "Operating Systems",
-    "Remote Desktop", "Ticketing", "ServiceNow", "Office 365", "Outlook", "Printers",
-    "Antivirus", "Patch Management", "Asset Management", "ITIL", "Incident Management",
+    "Troubleshooting", "Hardware", "Software Installation", "Operating Systems", "Windows",
+    "macOS", "Desktop Support", "Laptop", "Remote Desktop", "Ticketing", "ServiceNow",
+    "MS Office", "Office 365", "Outlook", "Printers", "Antivirus", "Patch Management",
+    "Asset Management", "ITIL", "Incident Management", "SLA", "Email Configuration",
+    # Customer support / BPO / voice process
+    "Customer Support", "Customer Service", "Inbound Calls", "Outbound Calls",
+    "Call Handling", "Telecalling", "Tele Sales", "CRM", "Query Resolution",
+    "Complaint Handling", "Escalation", "Chat Support", "Email Support", "Voice Process",
+    "Non-Voice Process", "BPO", "Typing", "Data Entry", "Cold Calling", "Lead Generation",
+    # Languages commonly required for support roles
+    "English", "Hindi", "Marathi", "Tamil", "Telugu", "Kannada", "Bengali", "Gujarati",
+    # Office / data tools
+    "Excel", "Power BI", "Tableau",
     # Soft/role skills commonly screened
-    "Communication", "Customer Service", "Technical Support", "Documentation",
+    "Communication", "Technical Support", "Documentation", "Interpersonal Skills",
 )
 # Precompiled phrase patterns (longest first so "LAN/WAN" wins over "LAN"/"WAN").
 _GAZETTEER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(

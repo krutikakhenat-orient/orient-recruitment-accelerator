@@ -26,6 +26,11 @@ _DB_PATH = pathlib.Path(__file__).resolve().parent / "local_dev.sqlite3"
 os.environ.setdefault("ORA_ENVIRONMENT", "development")
 os.environ.setdefault("ORA_DATABASE_URL", f"sqlite:///{_DB_PATH.as_posix()}")
 os.environ.setdefault("ORA_JWT_SECRET", "local-dev-secret-change-me-32-characters!!")
+# Persist uploaded files (resumes/JDs) to disk for local dev so they survive server
+# restarts. Without this the in-memory object store loses every blob on restart and the
+# Interview Panel's Resume tab shows "No resume available" for earlier applicants.
+_OBJ_DIR = pathlib.Path(__file__).resolve().parent / "local_dev_objectstore"
+os.environ.setdefault("ORA_LOCAL_OBJECT_STORE_DIR", str(_OBJ_DIR))
 
 import uvicorn  # noqa: E402
 

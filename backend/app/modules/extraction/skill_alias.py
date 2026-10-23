@@ -184,4 +184,46 @@ def expand_skill_terms(skill: str) -> list[str]:
             _add(core[0])
             for a in aliases_for(core[0]):
                 _add(a)
+
+    # Morphological variants of the SAME skill word (singular/plural and common verb/noun
+    # suffixes), so a JD "Troubleshooting" matches a resume "troubleshoot"/"troubleshooting"
+    # and "Firewalls" matches "firewall". This is deterministic normalisation of ONE skill's
+    # surface forms, not inference about related skills: every variant shares the same stem.
+    for existing_term in list(terms):
+        for variant in _morphological_variants(existing_term):
+            _add(variant)
     return terms
+
+
+# Common English suffixes to add/strip to generate surface-form variants of a single skill
+# word. Applied only to a single alphabetic token (never to acronyms, multi-word phrases, or
+# tokens with punctuation like "TCP/IP" or ".NET"), so it cannot conflate distinct skills.
+_MORPH_SUFFIXES: tuple[str, ...] = ("s", "es", "ing", "ed", "er", "ers", "ion", "ions")
+
+
+def _morphological_variants(term: str) -> list[str]:
+    """Surface-form variants of a single skill word (plurals, -ing/-ed/-ion forms).
+
+    Returns an empty list for anything that is not a single, purely-alphabetic word of
+    length >= 4 (so acronyms like VPN/NAT/SOC, versioned/punctuated tokens and multi-word
+    phrases are left untouched). Deterministic and stem-based: all variants share the same
+    root, so this never maps one skill onto a different, merely-related skill."""
+    t = term.strip()
+    if " " in t or not t.isalpha() or len(t) < 4:
+        return []
+    low = t.lower()
+    roots = {low}
+    # Derive the root by stripping a known suffix, then regenerate the full family.
+    for suf in sorted(_MORPH_SUFFIXES, key=len, reverse=True):
+        if low.endswith(suf) and len(low) - len(suf) >= 3:
+            roots.add(low[: -len(suf)])
+            # Handle "-ies" <-> "-y" and doubled/-e stems minimally ("policies"->"policy").
+            if suf in ("es", "ions", "ers"):
+                roots.add(low[: -len(suf)] + "e")
+    variants: set[str] = set()
+    for root in roots:
+        variants.add(root)
+        for suf in _MORPH_SUFFIXES:
+            variants.add(root + suf)
+    variants.discard(low)
+    return sorted(variants)

@@ -412,7 +412,10 @@ def test_status_unknown_application_returns_none(db_session) -> None:
 # --- Auto-progression of eligible (>=50, clean) candidates into the Interview Panel -------
 
 
-def _scored_app(db_session, org, campaign, score, *, manual=False, conflict=False):  # type: ignore[no-untyped-def]
+def _scored_app(  # type: ignore[no-untyped-def]
+    db_session, org, campaign, score, *, manual=False, conflict=False,
+    recommendation="recommended_for_interview_review",
+):
     """A screened application with a completed run of the given score/flags."""
     import datetime as dt
 
@@ -422,7 +425,7 @@ def _scored_app(db_session, org, campaign, score, *, manual=False, conflict=Fals
     run = ScreeningRun(
         organisation_id=org.id, application_id=app.id, rule_set_version_id=uuid.uuid4(),
         score=score, eligibility_outcome="eligible", confidence_status="confirmed",
-        recommendation="recommended_for_interview_review",
+        recommendation=recommendation,
         manual_review_required=manual, conflict_flagged=conflict,
         completed_at=dt.datetime.now(tz=dt.UTC), input_data_hash="x" * 12,
         engine_version="1.0.0",
@@ -502,14 +505,39 @@ def test_below_fifty_not_auto_progressed(db_session) -> None:
     assert app.state == ApplicationState.SCREENED.value
 
 
-def test_manual_review_candidate_keeps_safeguard_not_auto_progressed(db_session) -> None:
-    """A >=50 candidate flagged for manual review must NOT be auto-progressed — the existing
-    human-review safeguard is preserved."""
+def test_high_scorer_with_unconfirmed_skills_still_progresses(db_session) -> None:
+    """A >=50 candidate whose run is flagged for manual review ONLY because some skills are
+    unconfirmed (recommendation additional_information_required) DOES auto-progress to the
+    panel — the interview verifies those skills. Previously the blanket manual-review gate
+    stranded every strong candidate whose resume did not contain every JD keyword."""
     from app.modules.screening import service as screening_service
 
     org = make_org(db_session)
     campaign = _open_campaign_with_form(db_session, org)
-    app, run = _scored_app(db_session, org, campaign, 92.0, manual=True)
+    app, run = _scored_app(
+        db_session, org, campaign, 78.0, manual=True,
+        recommendation="additional_information_required",
+    )
+
+    progressed = screening_service.auto_progress_to_interview(
+        db_session, organisation_id=org.id, application=app, run=run
+    )
+    assert progressed is True
+    assert _invitation_count(db_session, app) == 1
+
+
+def test_mandatory_not_confirmed_candidate_not_auto_progressed(db_session) -> None:
+    """A candidate whose MANDATORY criterion is contradicted by confirmed evidence
+    (mandatory_not_confirmed) is a hard blocker and must NOT be auto-progressed, even above
+    the score threshold — a human resolves it first."""
+    from app.modules.screening import service as screening_service
+
+    org = make_org(db_session)
+    campaign = _open_campaign_with_form(db_session, org)
+    app, run = _scored_app(
+        db_session, org, campaign, 92.0,
+        recommendation="mandatory_criterion_not_confirmed",
+    )
 
     progressed = screening_service.auto_progress_to_interview(
         db_session, organisation_id=org.id, application=app, run=run

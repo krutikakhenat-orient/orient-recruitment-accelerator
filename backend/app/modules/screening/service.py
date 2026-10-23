@@ -247,19 +247,40 @@ def detect_self_assessment_conflicts(
         # confidence is already handled by the per-criterion low-confidence routing.
         system_recovered = field.extraction_method == "resume_text_fallback"
 
-        if claimed_num is not None and evidence_num is not None and claimed_num > evidence_num:
-            findings.append(
-                ConflictFinding(
-                    field_name=key,
-                    claimed=str(answers[key]),
-                    evidence=str(field.effective_value),
-                    reason=(
-                        f"Claimed '{key}'={answers[key]} exceeds verified resume evidence "
-                        f"({field.effective_value})."
-                    ),
+        # If the self-claim and the resume evidence AGREE, there is no conflict — regardless
+        # of the extraction confidence. A numeric claim <= evidence is corroborated; a text
+        # claim equal to the evidence (e.g. the candidate's own name that was also parsed
+        # from the resume) is corroborated. Low extraction confidence on an AGREEING value is
+        # not a discrepancy to flag — it is handled by per-criterion low-confidence routing.
+        # This removes the spurious "data conflict" that previously fired on every candidate
+        # (their name matched a 0.60-confidence extracted name) and blocked auto-progression.
+        if claimed_num is not None and evidence_num is not None:
+            if claimed_num > evidence_num:
+                findings.append(
+                    ConflictFinding(
+                        field_name=key,
+                        claimed=str(answers[key]),
+                        evidence=str(field.effective_value),
+                        reason=(
+                            f"Claimed '{key}'={answers[key]} exceeds verified resume "
+                            f"evidence ({field.effective_value})."
+                        ),
+                    )
                 )
-            )
-        elif (
+            # claimed_num <= evidence_num: corroborated, no conflict.
+            continue
+
+        # Non-numeric: a conflict only when the claim and the evidence genuinely DIFFER AND
+        # the evidence is low-confidence/unverified. Equal (corroborating) values never
+        # conflict. A placeholder/non-answer (e.g. a walk-in "to be confirmed") is not a
+        # verifiable self-claim and is skipped.
+        claimed_text = str(answers[key]).strip().lower()
+        evidence_text = str(field.effective_value or "").strip().lower()
+        if not claimed_text or _is_placeholder_answer(claimed_text):
+            continue
+        if claimed_text == evidence_text:
+            continue  # claim corroborated by evidence
+        if (
             not is_verified
             and not system_recovered
             and field.confidence < SELF_ASSESSMENT_CONFIDENCE_FLOOR
@@ -270,13 +291,28 @@ def detect_self_assessment_conflicts(
                     claimed=str(answers[key]),
                     evidence=str(field.effective_value),
                     reason=(
-                        f"Self-claim for '{key}' rests on low-confidence resume evidence "
-                        f"(confidence {field.confidence:.2f} < "
+                        f"Self-claim for '{key}' differs from low-confidence resume "
+                        f"evidence (confidence {field.confidence:.2f} < "
                         f"{SELF_ASSESSMENT_CONFIDENCE_FLOOR:.2f})."
                     ),
                 )
             )
     return findings
+
+
+# Placeholder / non-answer values a candidate (or walk-in intake) may leave in a field.
+# These are not verifiable self-claims and must never be treated as a data conflict.
+_PLACEHOLDER_ANSWERS: frozenset[str] = frozenset(
+    {"walk-in - to be confirmed", "walk-in — to be confirmed", "to be confirmed", "tbc",
+     "tbd", "n/a", "na", "not applicable", "none", "-", "--"}
+)
+
+
+def _is_placeholder_answer(text: str) -> bool:
+    t = text.strip().lower()
+    # Normalise dashes so "walk-in — to be confirmed" matches regardless of dash style.
+    t = t.replace("—", "-").replace("–", "-")
+    return t in _PLACEHOLDER_ANSWERS or "to be confirmed" in t
 
 
 def _input_hash(answers: dict[str, Any], fields: list[ExtractedField],
@@ -894,8 +930,16 @@ def auto_progress_to_interview(
 
     Safeguards (never bypassed):
       - Score must be >= the agreed 50 boundary (below 50 is NOT auto-progressed).
-      - The run must be clean: not routed to manual review and not conflict-flagged. A
-        candidate needing human review keeps the existing review path instead.
+      - No HARD blocker: a detected self-assessment conflict (conflict_flagged) or a
+        mandatory criterion CONTRADICTED by confirmed evidence (recommendation
+        mandatory_not_confirmed) keeps the candidate on the review path. These are genuine
+        problems a human must resolve first.
+      - Unconfirmed skills that merely ROUTED TO REVIEW do NOT block a candidate who already
+        clears the score threshold: the interview panel verifies those skills anyway, so a
+        strong candidate (e.g. 78%) with a couple of unverified skill keywords should reach
+        the panel exactly as before — not be stranded in the review queue. (Previously the
+        blanket manual_review_required gate stranded every high scorer whose resume did not
+        literally contain every JD keyword.)
       - Idempotent: `record_walk_in_interview` reuses an existing invitation and
         `approve_invitation` blocks duplicates, so retries never create duplicate records.
       - The application must be in a state from which an interview can be recommended.
@@ -907,7 +951,12 @@ def auto_progress_to_interview(
 
     if run.score < WALK_IN_MESSAGE_BOUNDARY:
         return False
-    if run.manual_review_required or run.conflict_flagged:
+    # Hard blockers only: a real data conflict, or a mandatory criterion contradicted by
+    # confirmed evidence. Unconfirmed-but-not-contradicted skills (ADDITIONAL_INFO_REQUIRED)
+    # do not block a candidate who already clears the score threshold.
+    if run.conflict_flagged:
+        return False
+    if run.recommendation == ScreeningRecommendation.MANDATORY_NOT_CONFIRMED.value:
         return False
     if application.state not in {
         ApplicationState.SCREENED.value,

@@ -19,7 +19,6 @@ export function LoginPage(): ReactNode {
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors, isSubmitting },
   } = useForm<LoginForm>();
 
@@ -36,11 +35,6 @@ export function LoginPage(): ReactNode {
       );
     }
   }
-
-  const fillDemo = (): void => {
-    setValue("email", "synthetic.recruiter_admin@example.com");
-    setValue("password", "SyntheticDevPassword123");
-  };
 
   return (
     <div className="auth-wrap">
@@ -93,17 +87,6 @@ export function LoginPage(): ReactNode {
               {isSubmitting ? "Signing in…" : "Sign in"}
             </Button>
           </form>
-
-          <div className="hint-list">
-            <strong>Demo accounts</strong> (synthetic, local only)
-            <br />
-            Email <code>synthetic.recruiter_admin@example.com</code> · Password{" "}
-            <code>SyntheticDevPassword123</code>
-            <br />
-            <button className="btn btn--ghost btn--sm" style={{ marginTop: 6 }} onClick={fillDemo}>
-              Fill demo credentials
-            </button>
-          </div>
         </div>
       </section>
     </div>

@@ -525,6 +525,7 @@ function ResumeTab({ applicationId }: { applicationId: string }): ReactNode {
   const { token } = useAuth();
   const [url, setUrl] = useState<string | null>(null);
   const [contentType, setContentType] = useState<string>("");
+  const [text, setText] = useState<string | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "missing" | "error">("loading");
   const [message, setMessage] = useState<string>("");
 
@@ -532,9 +533,10 @@ function ResumeTab({ applicationId }: { applicationId: string }): ReactNode {
     let revoked = false;
     let objectUrl: string | null = null;
     setState("loading");
+    setText(null);
     // downloadResume returns null on 404 (no resume on file) so we show a clear message.
     downloadResume(applicationId, token() ?? "")
-      .then((res) => {
+      .then(async (res) => {
         if (revoked) return;
         if (!res) {
           setState("missing");
@@ -543,6 +545,10 @@ function ResumeTab({ applicationId }: { applicationId: string }): ReactNode {
         objectUrl = URL.createObjectURL(res.blob);
         setUrl(objectUrl);
         setContentType(res.contentType);
+        // A plain-text resume (the extracted-text fallback) is previewed inline.
+        if (res.contentType.includes("text/plain")) {
+          setText(await res.blob.text());
+        }
         setState("ready");
       })
       .catch((e: unknown) => {
@@ -568,6 +574,7 @@ function ResumeTab({ applicationId }: { applicationId: string }): ReactNode {
   if (state === "error") return <ErrorNote>{message}</ErrorNote>;
 
   const isPdf = contentType.includes("pdf");
+  const isText = contentType.includes("text/plain");
   return (
     <div className="scorecard-section">
       <div className="btn-row" style={{ marginBottom: 8 }}>
@@ -586,6 +593,24 @@ function ResumeTab({ applicationId }: { applicationId: string }): ReactNode {
           src={url}
           style={{ width: "100%", height: 480, border: "1px solid var(--border)", borderRadius: 8 }}
         />
+      ) : isText && text !== null ? (
+        <pre
+          style={{
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxHeight: 480,
+            overflow: "auto",
+            padding: 12,
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            background: "var(--surface, #fff)",
+            fontFamily: "inherit",
+            fontSize: 14,
+            lineHeight: 1.6,
+          }}
+        >
+          {text}
+        </pre>
       ) : (
         <p className="subtle">
           Preview is available for PDF resumes. Use <strong>Download resume</strong> to view this

@@ -165,12 +165,40 @@ def test_claim_exceeding_evidence_is_flagged() -> None:
 
 
 def test_low_confidence_backing_is_flagged() -> None:
+    # A non-numeric self-claim that DIFFERS from low-confidence resume evidence is flagged
+    # for human review (the claim cannot be considered verified).
     findings = screening_service.detect_self_assessment_conflicts(
-        {"total_experience_years": "3"},
-        [_SimpleField("total_experience_years", "3", 0.4, VerificationStatus.UNVERIFIED)],
+        {"current_location": "Bangalore"},
+        [_SimpleField("current_location", "Mumbai", 0.4, VerificationStatus.UNVERIFIED)],
     )
     assert len(findings) == 1
     assert "low-confidence" in findings[0].reason
+
+
+def test_corroborating_low_confidence_value_is_not_a_conflict() -> None:
+    # Regression guard: a self-claim that AGREES with the resume evidence must NOT be flagged
+    # as a conflict merely because the extraction confidence is low. Previously this fired a
+    # spurious "data conflict" on every candidate (e.g. their own name matched a 0.60-
+    # confidence extracted name), which blocked auto-progression to the interview panel.
+    numeric = screening_service.detect_self_assessment_conflicts(
+        {"total_experience_years": "3"},
+        [_SimpleField("total_experience_years", "3", 0.4, VerificationStatus.UNVERIFIED)],
+    )
+    assert numeric == []
+    text = screening_service.detect_self_assessment_conflicts(
+        {"full_name": "Rohan Deshmukh"},
+        [_SimpleField("full_name", "Rohan Deshmukh", 0.6, VerificationStatus.UNVERIFIED)],
+    )
+    assert text == []
+
+
+def test_placeholder_answer_is_not_a_conflict() -> None:
+    # A walk-in placeholder ("to be confirmed") is not a verifiable self-claim.
+    findings = screening_service.detect_self_assessment_conflicts(
+        {"skills": "Walk-in — to be confirmed"},
+        [_SimpleField("skills", "Python", 0.4, VerificationStatus.UNVERIFIED)],
+    )
+    assert findings == []
 
 
 def test_system_recovered_experience_is_not_a_conflict() -> None:
