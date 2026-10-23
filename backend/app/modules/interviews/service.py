@@ -232,6 +232,9 @@ def assign_slot_and_confirm(
 def record_attendance(
     db: Session, *, actor: AuthenticatedActor, invitation_id: uuid.UUID, attended: bool,
 ) -> InterviewInvitation:
+    """LEGACY attendance recording (Attended / No-show), retained for backward
+    compatibility and any historical caller. The current Interview Panel uses
+    ``check_in`` / ``check_out`` instead. New code should not call this."""
     invitation = db.get(InterviewInvitation, invitation_id)
     if invitation is None or invitation.organisation_id != actor.organisation_id:
         raise NotFoundError("Invitation not found")
@@ -245,6 +248,111 @@ def record_attendance(
         destination = ApplicationState.ATTENDED if attended else ApplicationState.NO_SHOW
         transition(db, application=application, destination=destination,
                    reason="attendance recorded", actor=actor)
+    return invitation
+
+
+def _invitation_for_application(
+    db: Session, *, organisation_id: uuid.UUID, application_id: uuid.UUID
+) -> InterviewInvitation | None:
+    """Most-recent interview invitation for an application in this organisation."""
+    from sqlalchemy import select
+
+    return db.execute(
+        select(InterviewInvitation)
+        .where(
+            InterviewInvitation.organisation_id == organisation_id,
+            InterviewInvitation.application_id == application_id,
+        )
+        .order_by(InterviewInvitation.created_at.desc())
+    ).scalars().first()
+
+
+def check_in(
+    db: Session, *, actor: AuthenticatedActor, invitation_id: uuid.UUID,
+) -> InterviewInvitation:
+    """Interview Panel checks a candidate in on interview day (Req: Check In).
+
+    Moves the application INTERVIEW_SCHEDULED -> CHECKED_IN and stamps ``checked_in_at``.
+    Checking in only records that the interview STARTED — it never marks the interview
+    attended/completed. Duplicate check-ins are rejected (idempotency guard): a candidate
+    already checked in (or further along) cannot be checked in again.
+    """
+    invitation = db.get(InterviewInvitation, invitation_id)
+    if invitation is None or invitation.organisation_id != actor.organisation_id:
+        raise NotFoundError("Invitation not found")
+    if invitation.checked_in_at is not None:
+        raise ConflictError("This candidate has already been checked in")
+
+    application = db.get(Application, invitation.application_id)
+    if application is None or application.organisation_id != actor.organisation_id:
+        raise NotFoundError("Application not found")
+    if application.state != ApplicationState.INTERVIEW_SCHEDULED.value:
+        raise ConflictError(
+            "Only a scheduled candidate who has not yet checked in can be checked in"
+        )
+
+    invitation.checked_in_at = _now()
+    invitation.attendance = AttendanceStatus.CHECKED_IN.value
+    db.flush()
+
+    transition(db, application=application, destination=ApplicationState.CHECKED_IN,
+               reason="candidate checked in for interview", actor=actor)
+
+    record_event(
+        db,
+        AuditEventWrite(
+            organisation_id=actor.organisation_id, actor_id=actor.user_id,
+            action="interview.checked_in", entity_type="interview_invitation",
+            entity_id=str(invitation.id), new_state_ref="checked_in",
+        ),
+    )
+    return invitation
+
+
+def check_out(
+    db: Session, *, actor: AuthenticatedActor, invitation_id: uuid.UUID,
+) -> InterviewInvitation:
+    """Interview Panel checks a candidate out once the interview is finished (Req: Check
+    Out). Separate event from assessment submission.
+
+    Requires the assessment to have been submitted first: the application must be in the
+    ASSESSED state (reached only after ``assessment.submit``). Moves ASSESSED ->
+    CHECKED_OUT and stamps ``checked_out_at``. This is what makes the candidate visible as
+    "interview attended/completed" in Recruiter Admin. Duplicate check-outs are rejected.
+    """
+    invitation = db.get(InterviewInvitation, invitation_id)
+    if invitation is None or invitation.organisation_id != actor.organisation_id:
+        raise NotFoundError("Invitation not found")
+    if invitation.checked_in_at is None:
+        raise ConflictError("This candidate has not been checked in")
+    if invitation.checked_out_at is not None:
+        raise ConflictError("This candidate has already been checked out")
+
+    application = db.get(Application, invitation.application_id)
+    if application is None or application.organisation_id != actor.organisation_id:
+        raise NotFoundError("Application not found")
+    if application.state != ApplicationState.ASSESSED.value:
+        # Assessment-before-checkout is enforced here: a checked-in candidate must be
+        # assessed (-> ASSESSED) before they can be checked out.
+        raise ConflictError(
+            "The assessment must be submitted before the candidate can be checked out"
+        )
+
+    invitation.checked_out_at = _now()
+    invitation.attendance = AttendanceStatus.CHECKED_OUT.value
+    db.flush()
+
+    transition(db, application=application, destination=ApplicationState.CHECKED_OUT,
+               reason="candidate checked out; interview completed", actor=actor)
+
+    record_event(
+        db,
+        AuditEventWrite(
+            organisation_id=actor.organisation_id, actor_id=actor.user_id,
+            action="interview.checked_out", entity_type="interview_invitation",
+            entity_id=str(invitation.id), new_state_ref="checked_out",
+        ),
+    )
     return invitation
 
 

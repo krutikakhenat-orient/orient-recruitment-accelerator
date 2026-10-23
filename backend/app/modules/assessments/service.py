@@ -19,7 +19,8 @@ from app.modules.identity.schemas import AuthenticatedActor
 
 
 def list_assessable(db: Session, organisation_id: uuid.UUID) -> list[Application]:
-    """Applications that have ATTENDED an interview and are awaiting a panel assessment.
+    """Applications awaiting a panel assessment: those CHECKED_IN (new flow) or, for
+    historical records, ATTENDED (legacy flow).
 
     Panel members hold only ``assessment.submit`` (no candidate.view), so this is the one
     minimal view they get — enough to find the candidate they interviewed and record a
@@ -31,18 +32,54 @@ def list_assessable(db: Session, organisation_id: uuid.UUID) -> list[Application
         select(Application)
         .where(
             Application.organisation_id == organisation_id,
-            Application.state == ApplicationState.ATTENDED.value,
+            Application.state.in_(
+                (
+                    ApplicationState.CHECKED_IN.value,
+                    ApplicationState.ATTENDED.value,
+                )
+            ),
         )
         .order_by(Application.created_at.desc())
     )
     return list(db.execute(stmt).scalars())
 
 
-# States that make up a panel member's worklist, and the UI stage each maps to.
+def get_assessment(
+    db: Session,
+    *,
+    organisation_id: uuid.UUID,
+    application_id: uuid.UUID,
+    panel_member_id: uuid.UUID | None = None,
+) -> Assessment | None:
+    """The saved assessment for an application, optionally scoped to one panel member.
+
+    Used to (a) prevent duplicate submissions and (b) let the Assessment tab rehydrate a
+    previously-saved assessment so values survive tab switches / refreshes. When
+    ``panel_member_id`` is given, returns only that assessor's assessment; otherwise the
+    most recent assessment for the application.
+    """
+    from sqlalchemy import select
+
+    stmt = select(Assessment).where(
+        Assessment.organisation_id == organisation_id,
+        Assessment.application_id == application_id,
+    )
+    if panel_member_id is not None:
+        stmt = stmt.where(Assessment.panel_member_id == panel_member_id)
+    stmt = stmt.order_by(Assessment.created_at.desc())
+    return db.execute(stmt).scalars().first()
+
+
+# States that make up a panel member's worklist, and the UI stage each maps to. The new
+# interview-day lifecycle is Scheduled -> Checked In -> Assessed -> Checked Out, so the UI
+# stages are: confirm arrival (to_check_in), assess (to_assess), check out (to_check_out),
+# done (completed). Legacy ATTENDED rows map to to_assess so they can still be assessed.
 _PANEL_STATE_STAGE: dict[str, str] = {
-    ApplicationState.INTERVIEW_SCHEDULED.value: "to_attend",
+    ApplicationState.INTERVIEW_SCHEDULED.value: "to_check_in",
+    ApplicationState.CHECKED_IN.value: "to_assess",
     ApplicationState.ATTENDED.value: "to_assess",
-    ApplicationState.ASSESSED.value: "completed",
+    ApplicationState.ASSESSED.value: "to_check_out",
+    ApplicationState.CHECKED_OUT.value: "completed",
 }
 
 
@@ -70,7 +107,7 @@ def panel_worklist(db: Session, organisation_id: uuid.UUID) -> list[dict[str, An
             .order_by(Application.created_at.desc())
         ).scalars()
     )
-    # Map application_id -> most recent invitation id (for the attendance action).
+    # Map application_id -> most recent invitation id (for the check-in/out actions).
     inv_by_app: dict[uuid.UUID, uuid.UUID] = {}
     for inv in db.execute(
         select(InterviewInvitation)
@@ -78,6 +115,20 @@ def panel_worklist(db: Session, organisation_id: uuid.UUID) -> list[dict[str, An
         .order_by(InterviewInvitation.created_at.desc())
     ).scalars():
         inv_by_app.setdefault(inv.application_id, inv.id)
+
+    # Which of these applications already have an assessment (so the UI can show status and
+    # gate check-out). One query, then a set lookup — no per-row database call.
+    app_ids = [a.id for a in apps]
+    assessed_app_ids: set[uuid.UUID] = set()
+    if app_ids:
+        assessed_app_ids = set(
+            db.execute(
+                select(Assessment.application_id).where(
+                    Assessment.organisation_id == organisation_id,
+                    Assessment.application_id.in_(app_ids),
+                )
+            ).scalars()
+        )
 
     out: list[dict[str, Any]] = []
     for a in apps:
@@ -90,6 +141,7 @@ def panel_worklist(db: Session, organisation_id: uuid.UUID) -> list[dict[str, An
                 "candidate_name": str(name) if name else "Candidate",
                 "state": a.state,
                 "stage": _PANEL_STATE_STAGE[a.state],
+                "has_assessment": a.id in assessed_app_ids,
             }
         )
     return out
@@ -108,8 +160,22 @@ def submit_assessment(
     conflict_declared: bool = False,
     conflict_detail: str | None = None,
 ) -> Assessment:
-    if application.state != ApplicationState.ATTENDED.value:
-        raise ConflictError("An assessment can only be submitted for an attended interview")
+    # An assessment can be submitted once the candidate has been checked in (new flow) or,
+    # for legacy records, marked attended. This guards against assessing someone who merely
+    # had an interview scheduled but never arrived/checked in.
+    if application.state not in {
+        ApplicationState.CHECKED_IN.value,
+        ApplicationState.ATTENDED.value,
+    }:
+        raise ConflictError(
+            "An assessment can only be submitted after the candidate has been checked in"
+        )
+    # Prevent DUPLICATE assessment submissions by the same panel member for the same
+    # application. Reassessment is not part of the current workflow, so a second submission
+    # from the same assessor is rejected rather than silently creating a duplicate record.
+    if get_assessment(db, organisation_id=application.organisation_id,
+                       application_id=application.id, panel_member_id=actor.user_id) is not None:
+        raise ConflictError("You have already submitted an assessment for this candidate")
     if conflict_declared and not (conflict_detail and conflict_detail.strip()):
         raise ValidationError("A conflict detail is required when a conflict is declared")
 

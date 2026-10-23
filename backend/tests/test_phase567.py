@@ -172,10 +172,12 @@ def test_panel_worklist_groups_by_stage(db_session) -> None:
 
     work = assessment_service.panel_worklist(db_session, org.id)
     mine = next(w for w in work if w["application_id"] == app.id)
-    assert mine["stage"] == "to_attend"
+    # A scheduled candidate is awaiting check-in in the new flow.
+    assert mine["stage"] == "to_check_in"
     assert mine["invitation_id"] == inv.id
 
-    # After attendance it becomes "to_assess".
+    # After the legacy attendance path it becomes "to_assess" (legacy ATTENDED rows are
+    # still mapped to the assess stage so historical records remain workable).
     interview_service.record_attendance(
         db_session, actor=_panel_actor(org), invitation_id=inv.id, attended=True
     )
@@ -209,11 +211,11 @@ def test_slot_capacity_enforced(db_session) -> None:
         )
 
 
-def test_assessment_requires_attended(db_session) -> None:
+def test_assessment_requires_checked_in(db_session) -> None:
     org = make_org(db_session)
     actor = _actor(org, uuid.uuid4(), RoleName.RECRUITER_ADMIN)
     app = _application(db_session, org, ApplicationState.SCREENED)
-    with pytest.raises(ConflictError, match="attended"):
+    with pytest.raises(ConflictError, match="checked in"):
         assessment_service.submit_assessment(
             db_session, actor=actor, application=app, criteria_scores={},
             recommendation=AssessmentRecommendation.PROCEED,

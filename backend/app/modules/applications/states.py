@@ -23,9 +23,18 @@ class ApplicationState(str, Enum):
     ADDITIONAL_INFO_REQUESTED = "additional_info_requested"
     INTERVIEW_RECOMMENDED = "interview_recommended"
     INTERVIEW_SCHEDULED = "interview_scheduled"
+    # Panel-driven interview-day lifecycle (Check In -> assess -> Check Out). CHECKED_IN
+    # means the candidate physically arrived and the panel opened their assessment;
+    # CHECKED_OUT means the interview is finished AFTER the assessment was submitted, and
+    # is what makes a candidate appear as "interview attended/completed" in Recruiter Admin.
+    CHECKED_IN = "checked_in"
+    # ATTENDED / NO_SHOW are LEGACY attendance states retained for historical records that
+    # pre-date the check-in/check-out flow. New interviews use CHECKED_IN instead of
+    # ATTENDED; we never silently convert existing ATTENDED/NO_SHOW rows.
     ATTENDED = "attended"
     NO_SHOW = "no_show"
     ASSESSED = "assessed"
+    CHECKED_OUT = "checked_out"
     SELECTED = "selected"
     REJECTED = "rejected"
     HOLD = "hold"
@@ -70,16 +79,41 @@ TRANSITIONS: tuple[AppTransition, ...] = (
     AppTransition(S.MANUAL_REVIEW, S.WAITLISTED, "waitlist", P.WAITLIST_MANAGE),
     AppTransition(S.INTERVIEW_RECOMMENDED, S.INTERVIEW_SCHEDULED, "schedule",
                   P.INTERVIEW_SCHEDULE, candidate_communication_impact=True),
-    # Attendance is recorded by the INTERVIEW PANEL (who hold assessment.submit and are
-    # invited to the specific candidate, not assigned to the campaign) — hence
-    # campaign_scoped=False, mirroring the ASSESSED transition. The panel confirms the
-    # candidate showed up, then assesses them.
+    # --- Interview-day lifecycle, driven by the INTERVIEW PANEL ---
+    # The panel holds assessment.submit and is invited to the specific candidate rather than
+    # assigned to the campaign, so these are campaign_scoped=False; the source-state guard is
+    # what scopes them (e.g. you can only check in a genuinely INTERVIEW_SCHEDULED candidate).
+    #
+    # 1. Check In: the candidate arrived and the panel opened their assessment. This does NOT
+    #    mark the interview complete — only that it started.
+    AppTransition(S.INTERVIEW_SCHEDULED, S.CHECKED_IN, "check_in", P.ASSESSMENT_SUBMIT,
+                  campaign_scoped=False),
+    # 2. Assessment submitted: CHECKED_IN -> ASSESSED. A checked-in candidate must still be
+    #    assessed before the interview can be closed.
+    AppTransition(S.CHECKED_IN, S.ASSESSED, "assessed", P.ASSESSMENT_SUBMIT,
+                  campaign_scoped=False),
+    # 3. Check Out: ASSESSED -> CHECKED_OUT. Separate event from assessment; only an assessed
+    #    candidate can be checked out, so assessment-before-checkout is enforced by this guard.
+    #    CHECKED_OUT is the state Recruiter Admin reads as "interview attended/completed".
+    AppTransition(S.ASSESSED, S.CHECKED_OUT, "check_out", P.ASSESSMENT_SUBMIT,
+                  campaign_scoped=False),
+    # --- LEGACY attendance path (retained for historical records; not used by new UI) ---
+    # Older interviews recorded attendance directly as ATTENDED / NO_SHOW. These transitions
+    # remain valid so pre-existing records keep working and remain reproducible. The legacy
+    # ATTENDED -> ASSESSED edge is preserved too.
     AppTransition(S.INTERVIEW_SCHEDULED, S.ATTENDED, "attended", P.ASSESSMENT_SUBMIT,
                   campaign_scoped=False),
     AppTransition(S.INTERVIEW_SCHEDULED, S.NO_SHOW, "no_show", P.ASSESSMENT_SUBMIT,
                   campaign_scoped=False),
     AppTransition(S.ATTENDED, S.ASSESSED, "assessed", P.ASSESSMENT_SUBMIT,
                   campaign_scoped=False),
+    # Both the new CHECKED_OUT and the legacy ASSESSED lead to a hiring decision, so the
+    # decision transitions accept either terminal interview state.
+    AppTransition(S.CHECKED_OUT, S.SELECTED, "select", P.HIRING_DECISION_APPROVE,
+                  candidate_communication_impact=True),
+    AppTransition(S.CHECKED_OUT, S.REJECTED, "reject", P.HIRING_DECISION_APPROVE,
+                  candidate_communication_impact=True),
+    AppTransition(S.CHECKED_OUT, S.HOLD, "hold", P.HIRING_DECISION_RECOMMEND),
     AppTransition(S.ASSESSED, S.SELECTED, "select", P.HIRING_DECISION_APPROVE,
                   candidate_communication_impact=True),
     AppTransition(S.ASSESSED, S.REJECTED, "reject", P.HIRING_DECISION_APPROVE,

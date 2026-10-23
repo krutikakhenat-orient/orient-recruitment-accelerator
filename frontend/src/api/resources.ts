@@ -432,6 +432,8 @@ export const interviewInvitation = z
     slot_id: uuid.nullable(),
     status: z.string(),
     attendance: z.string(),
+    checked_in_at: z.string().nullable().optional(),
+    checked_out_at: z.string().nullable().optional(),
     auto_invite: z.boolean(),
   })
   .passthrough();
@@ -463,6 +465,18 @@ export const recordAttendance = (invitationId: string, attended: boolean) =>
     method: "POST",
     body: JSON.stringify({ attended }),
   });
+// Interview Panel: check a candidate in on interview day (scheduled -> checked in). The
+// server rejects a duplicate check-in and a candidate who is not currently scheduled.
+export const checkInInvitation = (invitationId: string) =>
+  apiFetch(`/api/v1/interviews/invitations/${invitationId}/check-in`, interviewInvitation, {
+    method: "POST",
+  });
+// Interview Panel: check a candidate out once finished (assessed -> checked out). The
+// server requires the assessment to be submitted first and rejects a duplicate check-out.
+export const checkOutInvitation = (invitationId: string) =>
+  apiFetch(`/api/v1/interviews/invitations/${invitationId}/check-out`, interviewInvitation, {
+    method: "POST",
+  });
 // Express path: approve + auto-schedule in one call. The candidate then appears on the
 // Interview Panel's list immediately. `reason` is REQUIRED by the server when the candidate
 // is under review (below the automatic 50% bar) — it records the override justification.
@@ -492,6 +506,58 @@ export const submitAssessment = (body: Record<string, unknown>) =>
     body: JSON.stringify(body),
   });
 
+// The full saved assessment for an application, used to rehydrate the Assessment tab so
+// entered values survive tab switches / refreshes. Returns null when none is saved yet.
+export const assessmentDetail = z
+  .object({
+    id: uuid,
+    application_id: uuid,
+    campaign_id: uuid,
+    panel_member_id: uuid,
+    criteria_scores: z.record(z.union([z.number(), z.string()])),
+    problem_solving_notes: z.string().nullable(),
+    role_understanding_notes: z.string().nullable(),
+    interview_notes: z.string().nullable(),
+    recommendation: z.string(),
+    conflict_declared: z.boolean(),
+    conflict_detail: z.string().nullable(),
+  })
+  .passthrough();
+export type AssessmentDetail = z.infer<typeof assessmentDetail>;
+export const getAssessmentForApplication = (applicationId: string) =>
+  apiFetch(
+    `/api/v1/assessments/by-application/${applicationId}`,
+    assessmentDetail.nullable(),
+  );
+
+// Secure resume download URL for an application (authenticated, authorised server-side).
+// The file is served as an attachment; never a public bucket URL. Callers fetch it with the
+// bearer token (see downloadResume) rather than navigating the browser directly.
+export const resumeDownloadPath = (applicationId: string): string =>
+  `/api/v1/documents/applications/${applicationId}/resume`;
+
+// Fetch the resume as a Blob using the bearer token, so the Resume tab can preview/download
+// it. Returns null when there is no resume on file (404) so the UI can show a clear message.
+export async function downloadResume(
+  applicationId: string,
+  token: string,
+): Promise<{ blob: Blob; contentType: string } | null> {
+  const resp = await fetch(resumeDownloadPath(applicationId), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (resp.status === 404) return null;
+  if (!resp.ok) {
+    const body: unknown = await resp.json().catch(() => null);
+    const msg =
+      body && typeof body === "object" && "error" in body
+        ? (body as { error: { message: string } }).error.message
+        : `Could not load the resume (${resp.status})`;
+    throw new Error(msg);
+  }
+  const blob = await resp.blob();
+  return { blob, contentType: resp.headers.get("Content-Type") ?? "application/octet-stream" };
+}
+
 // The Interview Panel's own dashboard: interviews to attend / to assess / completed.
 export const panelInterview = z
   .object({
@@ -500,14 +566,16 @@ export const panelInterview = z
     invitation_id: uuid.nullable(),
     candidate_name: z.string(),
     state: z.string(),
-    stage: z.string(), // to_attend | to_assess | completed
+    stage: z.string(), // to_check_in | to_assess | to_check_out | completed
+    has_assessment: z.boolean().optional(),
   })
   .passthrough();
 export type PanelInterview = z.infer<typeof panelInterview>;
 export const panelDashboard = z
   .object({
-    to_attend: z.number(),
+    to_check_in: z.number(),
     to_assess: z.number(),
+    to_check_out: z.number(),
     completed: z.number(),
     total: z.number(),
     interviews: z.array(panelInterview),

@@ -460,9 +460,10 @@ def test_eligible_candidate_auto_progresses_to_interview_panel(db_session) -> No
     db_session.refresh(app)
     assert app.state == ApplicationState.INTERVIEW_SCHEDULED.value
     assert _invitation_count(db_session, app) == 1
-    # It shows up on the existing panel worklist (to_attend stage).
+    # It shows up on the existing panel worklist. A freshly-scheduled candidate is awaiting
+    # check-in in the interview-day flow (Scheduled -> Checked In -> Assessed -> Checked Out).
     worklist = panel_worklist(db_session, org.id)
-    assert any(row["application_id"] == app.id and row["stage"] == "to_attend" for row in worklist)
+    assert any(row["application_id"] == app.id and row["stage"] == "to_check_in" for row in worklist)
 
 
 def test_auto_progression_is_idempotent_on_retry(db_session) -> None:

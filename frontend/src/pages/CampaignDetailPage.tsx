@@ -33,6 +33,12 @@ import {
 import { useAuth } from "../app/auth-context";
 import { CandidateScorecardDrawer } from "../components/CandidateScorecardDrawer";
 import { QrCode, qrDataUri } from "../components/QrCode";
+import {
+  HIDDEN_ANSWER_KEYS,
+  prettyFieldKey,
+  renderAnswerValue,
+  SALARY_DISPLAY_KEYS,
+} from "../lib/applicationFields";
 import { useToast } from "../components/toast";
 import {
   Badge,
@@ -47,7 +53,10 @@ import {
   toneFor,
 } from "../components/ui";
 
-type Tab = "overview" | "jd" | "form" | "applications" | "interviews";
+// NOTE: the standalone "form" tab was removed. The application form BUILDER now lives in
+// the Job Description tab (campaign setup), and submitted application data is viewed via the
+// Applications tab's "View form" action. The form feature/API/records are unchanged.
+type Tab = "overview" | "jd" | "applications" | "interviews";
 
 // Which permission each authoring tab's primary action needs, and a human label for the
 // role that typically holds it. Used to show relevant guidance and gate actions.
@@ -56,8 +65,7 @@ type Tab = "overview" | "jd" | "form" | "applications" | "interviews";
 // configures a rule set by hand.
 const TAB_META: Record<Tab, { permission: string | null; role: string; blurb: string }> = {
   overview: { permission: null, role: "All staff", blurb: "Status, lifecycle and the candidate apply link." },
-  jd: { permission: "jd.upload", role: "Recruiter", blurb: "Upload the job description — scoring criteria are generated from it automatically." },
-  form: { permission: "campaign.edit", role: "Recruiter", blurb: "Build the candidate application form." },
+  jd: { permission: "jd.upload", role: "Recruiter", blurb: "Upload the job description and build the candidate application form — scoring criteria are generated from the JD automatically." },
   applications: { permission: "screening.execute", role: "Recruiter", blurb: "View applications and run deterministic screening." },
   interviews: { permission: "interview.approve", role: "Recruiter Admin", blurb: "Select candidates for interview, manage stages and slots. Attendance is recorded by the interview panel." },
 };
@@ -243,11 +251,11 @@ export function CampaignDetailPage(): ReactNode {
       </div>
 
       <div className="btn-row" style={{ marginBottom: 6 }}>
-        {(["overview", "jd", "form", "applications", "interviews"] as Tab[]).map((t) => {
+        {(["overview", "jd", "applications", "interviews"] as Tab[]).map((t) => {
           const meta = TAB_META[t];
           const readOnly = meta.permission !== null && !hasPermission(meta.permission);
           const label =
-            t === "jd" ? "Job Description" : t === "applications" ? "Applications & Screening" : prettify(t);
+            t === "jd" ? "Job Description & Form" : t === "applications" ? "Applications & Screening" : prettify(t);
           return (
             <Button key={t} variant={tab === t ? "primary" : "default"} small onClick={() => setTab(t)}>
               {label}
@@ -261,8 +269,14 @@ export function CampaignDetailPage(): ReactNode {
       </p>
 
       {tab === "overview" && <OverviewTab campaignId={id} />}
-      {tab === "jd" && <JdTab campaignId={id} />}
-      {tab === "form" && <FormTab campaignId={id} />}
+      {tab === "jd" && (
+        <>
+          <JdTab campaignId={id} />
+          {/* The application-form builder now lives here (the standalone Form tab was
+              removed). The feature, its API and records are unchanged. */}
+          <FormTab campaignId={id} />
+        </>
+      )}
       {tab === "applications" && <ApplicationsTab campaignId={id} />}
       {tab === "interviews" && <InterviewsTab campaignId={id} />}
     </>
@@ -797,6 +811,32 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
   );
 }
 
+/* Map an application state to a human interview-status label + tone for Recruiter Admin.
+   This lets the recruiter distinguish candidates who are scheduled, in progress (checked in
+   but not yet checked out), and those who actually ATTENDED (checked out = interview
+   completed). Returns null for states before the interview stage so the column stays empty.
+   Legacy ATTENDED/NO_SHOW rows are also surfaced so historical records remain visible. */
+function interviewStatus(state: string): { label: string; tone: "ok" | "warn" | "info" | "neutral" } | null {
+  switch (state) {
+    case "interview_recommended":
+      return { label: "Interview recommended", tone: "info" };
+    case "interview_scheduled":
+      return { label: "Scheduled", tone: "info" };
+    case "checked_in":
+      return { label: "Checked in (in progress)", tone: "warn" };
+    case "assessed":
+      return { label: "Assessed — awaiting check-out", tone: "warn" };
+    case "checked_out":
+      return { label: "Interview attended (completed)", tone: "ok" };
+    case "attended":
+      return { label: "Attended (legacy)", tone: "ok" };
+    case "no_show":
+      return { label: "No-show (legacy)", tone: "neutral" };
+    default:
+      return null;
+  }
+}
+
 function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
@@ -843,6 +883,7 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
                   <th>Resume Score</th>
                   <th>Application form</th>
                   <th>Review status</th>
+                  <th>Interview status</th>
                   <th />
                 </tr>
               </thead>
@@ -888,46 +929,42 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
 
 /* Shows everything the candidate entered on the application form, in submitted order.
    Read-only. Internal/technical keys are hidden; booleans render as Yes/No; repeating
-   groups (education/work history) render as a small list. Nothing sensitive is computed
-   here — it simply displays the stored answers so staff can see the form submission. */
+   groups (education/work history) render as a small list; salary fields are formatted as
+   currency. A dedicated compensation summary surfaces Current Salary and In-Hand Salary
+   (and Expected) explicitly, showing "Not provided" when a value is genuinely missing.
+   Nothing is computed or fabricated — it simply displays the stored answers. */
 function ApplicationFormModal({ app, onClose }: { app: Application; onClose: () => void }): ReactNode {
-  const HIDDEN_KEYS = new Set(["privacy_consent", "talent_pool_consent", "position_applied_for"]);
-  const prettyKey = (k: string): string =>
-    k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-
-  const renderValue = (v: unknown): ReactNode => {
-    if (v === true) return "Yes";
-    if (v === false) return "No";
-    if (v == null || v === "") return <span className="subtle">—</span>;
-    if (Array.isArray(v)) {
-      if (v.length === 0) return <span className="subtle">—</span>;
-      return (
-        <ul style={{ margin: 0, paddingLeft: 18 }}>
-          {v.map((row, i) => (
-            <li key={i}>
-              {typeof row === "object" && row !== null
-                ? Object.entries(row as Record<string, unknown>)
-                    .filter(([, val]) => val !== "" && val != null)
-                    .map(([k, val]) => `${prettyKey(k)}: ${String(val)}`)
-                    .join(", ")
-                : String(row)}
-            </li>
-          ))}
-        </ul>
-      );
-    }
-    return String(v);
-  };
-
-  const entries = Object.entries(app.answers ?? {}).filter(([k]) => !HIDDEN_KEYS.has(k));
+  const answers = app.answers ?? {};
+  const entries = Object.entries(answers).filter(([k]) => !HIDDEN_ANSWER_KEYS.has(k));
   const candidateName =
-    typeof app.answers["full_name"] === "string" ? (app.answers["full_name"] as string) : "Candidate";
+    typeof answers["full_name"] === "string" ? (answers["full_name"] as string) : "Candidate";
 
   return (
     <Modal title={`Application form — ${candidateName}`} onClose={onClose}>
       <p className="subtle" style={{ marginTop: 0 }}>
         The details this candidate submitted on the application form.
       </p>
+
+      {/* Compensation summary: always surface the salary fields so Current / In-Hand salary
+          are visible. A field the campaign's form did not collect shows "Not provided"
+          rather than being hidden — missing is never shown as zero. */}
+      <div className="scorecard-section" style={{ marginBottom: 12 }}>
+        <h3 style={{ marginTop: 0 }}>Compensation</h3>
+        <div className="table-wrap">
+          <table className="data">
+            <tbody>
+              {SALARY_DISPLAY_KEYS.map((k) => (
+                <tr key={k}>
+                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{prettyFieldKey(k)}</td>
+                  <td>{renderAnswerValue(k, answers[k])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3>All submitted fields</h3>
       {entries.length === 0 ? (
         <Empty>No form answers were recorded for this application.</Empty>
       ) : (
@@ -939,8 +976,8 @@ function ApplicationFormModal({ app, onClose }: { app: Application; onClose: () 
             <tbody>
               {entries.map(([k, v]) => (
                 <tr key={k}>
-                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{prettyKey(k)}</td>
-                  <td>{renderValue(v)}</td>
+                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{prettyFieldKey(k)}</td>
+                  <td>{renderAnswerValue(k, v)}</td>
                 </tr>
               ))}
             </tbody>
@@ -1186,6 +1223,12 @@ function ApplicationRow({
         ) : (
           <span className="subtle">—</span>
         )}
+      </td>
+      <td>
+        {(() => {
+          const status = interviewStatus(app.state);
+          return status ? <Badge tone={status.tone}>{status.label}</Badge> : <span className="subtle">—</span>;
+        })()}
       </td>
       <td style={{ textAlign: "right" }}>
         <div className="btn-row" style={{ justifyContent: "flex-end" }}>

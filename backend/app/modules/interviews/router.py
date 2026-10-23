@@ -199,3 +199,42 @@ def record_attendance(
         db, actor=actor, invitation_id=invitation_id, attended=payload.attended
     )
     return InvitationRead.model_validate(updated)
+
+
+@router.post("/invitations/{invitation_id}/check-in", response_model=InvitationRead)
+def check_in(
+    invitation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> InvitationRead:
+    """Interview Panel checks a candidate in on interview day. Requires assessment.submit
+    (panel members are invited to the candidate, not campaign-assigned — same model as
+    assessment submission). The INTERVIEW_SCHEDULED-state guard in the service scopes this
+    to genuinely scheduled candidates, and duplicate check-ins are rejected."""
+    from app.modules.interviews.models import InterviewInvitation
+
+    invitation = db.get(InterviewInvitation, invitation_id)
+    if invitation is None or invitation.organisation_id != actor.organisation_id:
+        raise NotFoundError("Invitation not found")
+    require_permission(actor, Permission.ASSESSMENT_SUBMIT)
+    updated = service.check_in(db, actor=actor, invitation_id=invitation_id)
+    return InvitationRead.model_validate(updated)
+
+
+@router.post("/invitations/{invitation_id}/check-out", response_model=InvitationRead)
+def check_out(
+    invitation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> InvitationRead:
+    """Interview Panel checks a candidate out once the interview is finished. Requires
+    assessment.submit. The service enforces that the assessment was already submitted
+    (ASSESSED state) before checkout, and rejects duplicate check-outs."""
+    from app.modules.interviews.models import InterviewInvitation
+
+    invitation = db.get(InterviewInvitation, invitation_id)
+    if invitation is None or invitation.organisation_id != actor.organisation_id:
+        raise NotFoundError("Invitation not found")
+    require_permission(actor, Permission.ASSESSMENT_SUBMIT)
+    updated = service.check_out(db, actor=actor, invitation_id=invitation_id)
+    return InvitationRead.model_validate(updated)

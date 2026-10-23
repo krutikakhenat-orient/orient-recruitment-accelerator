@@ -71,4 +71,6 @@ class InvitationRead(BaseModel):
     slot_id: uuid.UUID | None
     status: str
     attendance: str
+    checked_in_at: dt.datetime | None = None
+    checked_out_at: dt.datetime | None = None
     auto_invite: bool

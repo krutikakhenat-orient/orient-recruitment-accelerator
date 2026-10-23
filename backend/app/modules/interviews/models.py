@@ -35,6 +35,11 @@ class InvitationStatus(str, Enum):
 
 class AttendanceStatus(str, Enum):
     PENDING = "pending"
+    # New check-in/check-out lifecycle values. CHECKED_IN = arrived, interview in progress;
+    # CHECKED_OUT = interview finished (after assessment). ATTENDED / NO_SHOW are legacy
+    # values kept for historical invitations recorded before this flow existed.
+    CHECKED_IN = "checked_in"
+    CHECKED_OUT = "checked_out"
     ATTENDED = "attended"
     NO_SHOW = "no_show"
 
@@ -103,4 +108,14 @@ class InterviewInvitation(UUIDPrimaryKey, Timestamped, Actioned, Base):
     approved_by: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     invited_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     confirmed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Interview-day check-in / check-out timestamps (the source of truth for the panel
+    # lifecycle). Both nullable: a scheduled-but-not-yet-arrived candidate has neither; a
+    # checked-in candidate has checked_in_at only; a completed interview has both. They are
+    # the authoritative record behind the ``attendance`` display string.
+    checked_in_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    checked_out_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     auto_invite: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

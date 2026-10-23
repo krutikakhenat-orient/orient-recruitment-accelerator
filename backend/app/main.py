@@ -30,6 +30,7 @@ from app.modules.campaigns.router import router as campaigns_router
 from app.modules.candidates.router import router as candidates_router
 from app.modules.decisions.router import router as decisions_router
 from app.modules.dev.router import router as dev_router
+from app.modules.documents.router import router as documents_router
 from app.modules.forms.router import router as forms_router
 from app.modules.identity.router import router as identity_router
 from app.modules.interviews.router import router as interviews_router
@@ -170,6 +171,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(candidates_router)
     app.include_router(applications_router)
     app.include_router(applications_public_router)
+    app.include_router(documents_router)
     app.include_router(rules_router)
     app.include_router(screening_router)
     app.include_router(reviews_router)
