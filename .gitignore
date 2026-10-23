@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.env
+*.env
+!deploy/.env.example
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+*.local
+
+# Secrets & data (never commit)
+*.pem
+*.key
+*.p12
+secrets/
+uploads/
+quarantine/
+*.resume
+candidate-data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Local databases (never commit — may contain candidate data)
+*.sqlite3
+*.sqlite
+*.db
+backend/local_dev.sqlite3
+
+# Generated test/demo artifacts (synthetic JD + resume pack)
+jd_pack/
+orient_jd_screening_pack/
+orient_jd_screening_pack.zip
+
+# Scratch / assistant temp output (never source)
+ginit.txt
+staged_all.txt
+staged_summary.txt
+staged.txt

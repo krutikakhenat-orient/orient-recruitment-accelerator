@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ora
+          POSTGRES_PASSWORD: ora
+          POSTGRES_DB: ora_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ora"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      ORA_ENVIRONMENT: test
+      ORA_JWT_SECRET: ci-secret-value-at-least-32-characters-long
+      ORA_DATABASE_URL: postgresql+psycopg://ora:ora@localhost:5432/ora_ci
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Format & lint (ruff)
+        run: ruff check app tests
+      - name: Type check (mypy)
+        run: mypy app
+      - name: Migration validation (upgrade then downgrade)
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+      - name: Unit + integration tests
+        run: pytest -q --cov=app --cov-report=term-missing
+      - name: Dependency vulnerability scan (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit || true   # report-only until a baseline is agreed (see devsecops.md)
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: npm ci || npm install
+      - name: Lint
+        run: npm run lint --if-present
+      - name: Type check
+        run: npm run typecheck --if-present
+      - name: Unit tests
+        run: npm run test --if-present
+      - name: Build
+        run: npm run build --if-present
+
+  # NOTE: Container image scanning (e.g. Trivy) and SAST (e.g. CodeQL/Bandit) are added
+  # as the images and codebase stabilise. Production deploy additionally requires:
+  # reviewed migration, backup confirmation, rollback plan, and human release approval
+  # (see .kiro/steering/devsecops.md).

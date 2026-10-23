@@ -1,0 +1,65 @@
+[project]
+name = "orient-recruitment-accelerator"
+version = "0.1.0"
+description = "Secure, explainable recruitment campaign management and candidate screening platform"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "sqlalchemy==2.0.36",
+    "alembic==1.14.0",
+    "psycopg[binary]==3.2.3",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.0",
+    "argon2-cffi==23.1.0",
+    "pyjwt==2.10.1",
+    "pyotp==2.9.0",
+    "python-multipart==0.0.20",
+    "email-validator==2.2.0",
+    # PDF text extraction (resume/JD parsing). Lazily imported as `fitz`; without it every
+    # PDF extracts to empty text and candidates score 0 on skills.
+    "pymupdf==1.25.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0",
+    "httpx==0.28.1",
+    "ruff==0.8.4",
+    "mypy==1.14.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "C4", "SIM"]
+# B008: FastAPI's Depends()/Query()/Header() in defaults is the intended pattern.
+# S105/S106: "token_type" literals ("access"/"bearer") are not secrets.
+ignore = ["S101", "B008", "S105", "S106"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S107"]  # synthetic test passwords are fine in tests
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = []
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["app"]

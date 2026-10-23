@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 320" role="img" aria-label="Orient logo">
+  <!--
+    Vector rendition of the Orient mark (approximate, used as a fallback until the official
+    PNG is placed at /orient-logo.png). Composition: a blue disc; a bold white 't' whose
+    stem curls to the upper-left; the disc's right lobe separated from the stem by a thin
+    white gap; a trademark glyph top-right.
+  -->
+  <defs>
+    <clipPath id="disc">
+      <circle cx="150" cy="170" r="140"/>
+    </clipPath>
+  </defs>
+
+  <!-- Blue disc -->
+  <circle cx="150" cy="170" r="140" fill="#13A3E8"/>
+
+  <!-- White layer: the 't' stem + hook, carved so the right lobe of the disc stays blue -->
+  <g clip-path="url(#disc)">
+    <!-- The 't': a thick vertical stem with a top crossbar that sweeps left and curls under -->
+    <path fill="#ffffff" d="
+      M150 70
+      C120 70 96 86 86 112
+      C78 133 86 150 104 150
+      C118 150 128 141 130 126
+      C124 133 113 131 110 121
+      C107 110 116 100 129 100
+      C139 100 146 107 146 118
+      L146 300
+      L170 300
+      L170 118
+      C170 90 164 70 150 70
+      Z"/>
+    <!-- Thin blue separation between stem and the right lobe -->
+    <path fill="#13A3E8" d="
+      M176 92
+      C196 104 206 128 206 160
+      L206 300
+      L182 300
+      L182 150
+      C182 126 180 108 170 96
+      Z"/>
+  </g>
+
+  <!-- Trademark -->
+  <text x="256" y="56" font-family="Arial, Helvetica, sans-serif" font-size="34" fill="#13A3E8" font-weight="700">™</text>
+</svg>
