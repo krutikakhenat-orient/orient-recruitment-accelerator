@@ -13,7 +13,12 @@ from app.modules.identity.permissions import Permission
 from app.modules.identity.schemas import AuthenticatedActor
 from app.modules.projects import repository as repo
 from app.modules.projects import service
-from app.modules.projects.schemas import ProjectCreate, ProjectRead
+from app.modules.projects.schemas import (
+    ProjectCreate,
+    ProjectDeleteResult,
+    ProjectRead,
+    ProjectUpdate,
+)
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
@@ -47,3 +52,39 @@ def get_project(
 ) -> ProjectRead:
     project = service.get_project(db, actor.organisation_id, project_id)
     return ProjectRead.model_validate(project)
+
+
+@router.patch("/{project_id}", response_model=ProjectRead)
+def update_project(
+    project_id: uuid.UUID,
+    payload: ProjectUpdate,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(requires(Permission.PROJECT_CREATE)),
+) -> ProjectRead:
+    """Edit a project. Requires project.create (held by Recruiter / Recruiter Admin)."""
+    project = service.update_project(
+        db, actor.organisation_id, project_id, payload, actor.user_id
+    )
+    db.commit()
+    return ProjectRead.model_validate(project)
+
+
+@router.delete("/{project_id}", response_model=ProjectDeleteResult)
+def delete_project(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(requires(Permission.PROJECT_CREATE)),
+) -> ProjectDeleteResult:
+    """Hard-delete a project AND every campaign inside it, with all their data
+    (applications, screening/review history, interviews, assessments, decisions, waitlist,
+    JD/rules/threshold/form config). Destructive and consequential: requires project.create
+    and a typed confirmation in the UI. Every deletion is audited."""
+    campaigns_removed, applications_removed = service.delete_project(
+        db, actor.organisation_id, project_id, actor.user_id
+    )
+    db.commit()
+    return ProjectDeleteResult(
+        deleted_project_id=project_id,
+        campaigns_removed=campaigns_removed,
+        applications_removed=applications_removed,
+    )

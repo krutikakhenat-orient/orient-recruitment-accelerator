@@ -17,6 +17,20 @@ export type Project = z.infer<typeof project>;
 export const listProjects = () => apiFetch("/api/v1/projects", z.array(project));
 export const createProject = (body: Record<string, unknown>) =>
   apiFetch("/api/v1/projects", project, { method: "POST", body: JSON.stringify(body) });
+// Edit a project's details (only provided fields change).
+export const updateProject = (id: string, body: Record<string, unknown>) =>
+  apiFetch(`/api/v1/projects/${id}`, project, { method: "PATCH", body: JSON.stringify(body) });
+// Hard-delete a project AND every campaign inside it with all related data. Destructive +
+// audited server-side; the UI requires a typed confirmation before calling this.
+const projectDeleteResult = z
+  .object({
+    deleted_project_id: z.string(),
+    campaigns_removed: z.number(),
+    applications_removed: z.number(),
+  })
+  .passthrough();
+export const deleteProject = (id: string) =>
+  apiFetch(`/api/v1/projects/${id}`, projectDeleteResult, { method: "DELETE" });
 
 // ---------- Campaigns ----------
 export const campaign = z

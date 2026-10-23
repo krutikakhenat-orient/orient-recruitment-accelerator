@@ -107,9 +107,16 @@ def delete_campaign(
     Returns the number of applications deleted (for the audit reason + UI feedback).
     """
     from app.modules.applications.models import Application
+    from app.modules.assessments.models import Assessment
+    from app.modules.decisions.models import HiringDecision
     from app.modules.extraction.models import ExtractedField
     from app.modules.forms.models import FormField, FormSchema, FormVersion
     from app.modules.identity.models import CampaignAssignment
+    from app.modules.interviews.models import (
+        InterviewInvitation,
+        InterviewSlot,
+        InterviewStage,
+    )
     from app.modules.job_descriptions.models import JDVersion, JobDescription
     from app.modules.review.models import ReviewAction, ReviewItem
     from app.modules.rules.models import (
@@ -119,6 +126,7 @@ def delete_campaign(
         ThresholdVersion,
     )
     from app.modules.screening.models import CriterionResult, ScreeningRun
+    from app.modules.waitlist.models import WaitlistRecord
 
     cid = campaign.id
 
@@ -162,7 +170,41 @@ def delete_campaign(
         db.query(ExtractedField).filter(ExtractedField.application_id.in_(app_ids)).delete(
             synchronize_session=False
         )
+        # Interview-day + downstream records scoped to these applications: assessments,
+        # interview invitations, hiring decisions, waitlist entries. Removed so no orphan
+        # rows remain after the applications are deleted.
+        db.query(Assessment).filter(Assessment.application_id.in_(app_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(InterviewInvitation).filter(
+            InterviewInvitation.application_id.in_(app_ids)
+        ).delete(synchronize_session=False)
+        db.query(HiringDecision).filter(HiringDecision.application_id.in_(app_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(WaitlistRecord).filter(WaitlistRecord.application_id.in_(app_ids)).delete(
+            synchronize_session=False
+        )
         db.query(Application).filter(Application.id.in_(app_ids)).delete(
+            synchronize_session=False
+        )
+
+    # Interview stages/slots are campaign-scoped (not per-application). Delete slots first
+    # (they reference a stage), then the stages.
+    stage_ids = [
+        s.id
+        for s in db.execute(
+            select(InterviewStage).where(
+                InterviewStage.organisation_id == organisation_id,
+                InterviewStage.campaign_id == cid,
+            )
+        ).scalars()
+    ]
+    if stage_ids:
+        db.query(InterviewSlot).filter(InterviewSlot.stage_id.in_(stage_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(InterviewStage).filter(InterviewStage.id.in_(stage_ids)).delete(
             synchronize_session=False
         )
 
@@ -245,7 +287,10 @@ def delete_campaign(
             entity_type="campaign",
             entity_id=str(cid),
             previous_state_ref=campaign.state,
-            reason=f"hard delete; removed {len(app_ids)} application(s) and all config",
+            reason=(
+                f"hard delete; removed {len(app_ids)} application(s) and all config, "
+                "interviews, assessments, decisions and waitlist entries"
+            ),
         ),
     )
 
