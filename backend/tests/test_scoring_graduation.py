@@ -137,3 +137,56 @@ def test_partial_skill_match_produces_graduated_score(db_session) -> None:
     assert 0.0 < run.score < 100.0, (
         f"expected a graduated score, got {run.score}; results={detail}"
     )
+
+
+def test_unconfirmed_must_haves_stay_in_denominator(db_session) -> None:
+    """A candidate who confirms SOME must-have skills but not all (the rest route to human
+    review) must still get a meaningful fit score, not a collapsed near-zero. Must-have
+    criteria routed to review stay in the denominator, so the score reads as "% of the whole
+    role demonstrated" instead of being computed over leftover optional skills only. This is
+    the regression guard for the reported '29 and 0 only' scores."""
+    org = make_org(db_session)
+    # A role with several must-have skills + experience, plus optional skills.
+    rules = rules_service.build_rules_from_jd(
+        mandatory_skills=["Firewalls", "VPN", "IDS", "IPS", "Cisco"],
+        desirable_skills=["Python", "SIEM", "Fortinet"],
+        nice_to_have_skills=["AWS", "Azure"],
+        minimum_total_experience_years=4,
+    )
+    version = rules_service.create_rule_set_version(
+        db_session, organisation_id=org.id, campaign_id=CAMPAIGN, name="ns-rs",
+        rules=rules, actor_id=uuid.uuid4(),
+    )
+    version = rules_service.approve_rule_set_version(
+        db_session, organisation_id=org.id, version_id=version.id, approver_id=uuid.uuid4(),
+    )
+    threshold = rules_service.change_threshold(
+        db_session, organisation_id=org.id, campaign_id=CAMPAIGN,
+        review_below=50, recommend_at_or_above=70, change_reason="init",
+        actor_id=uuid.uuid4(), approver_id=uuid.uuid4(),
+    )
+    app = Application(
+        organisation_id=org.id, campaign_id=CAMPAIGN, candidate_id=uuid.uuid4(),
+        form_version_id=uuid.uuid4(),
+        answers={"total_experience_years": "6", "full_name": "Synthetic Candidate"},
+        state=ApplicationState.EXTRACTION_REVIEW.value,
+    )
+    db_session.add(app)
+    db_session.flush()
+    # Confirm only 2 of 5 must-haves (+ experience is in answers). The other 3 must-haves
+    # are unconfirmed -> route to review but REMAIN in the denominator.
+    for skill in ("Firewalls", "VPN"):
+        db_session.add(_skill_field(org.id, app.id, skill))
+    db_session.flush()
+
+    run = screening_service.execute_for_application(
+        db_session, organisation_id=org.id, application=app,
+        rule_set_version=version, threshold_version=threshold, actor=_actor(org),
+    ).run
+
+    # Unconfirmed mandatory skills route the run to human review (never auto-reject).
+    assert run.manual_review_required is True
+    # The score reflects the full role: 2 must-haves (40) + experience (20) awarded over a
+    # denominator that still includes ALL must-haves. It must be well below 100 but NOT the
+    # collapsed near-zero (<10%) the old denominator produced.
+    assert 10.0 < run.score < 60.0, f"score collapsed or inflated: {run.score}"

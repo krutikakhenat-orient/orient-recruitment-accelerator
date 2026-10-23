@@ -129,15 +129,19 @@ _SKILL_SECTION_HEADERS: tuple[tuple[str, str], ...] = (
     (r"good[\s\-]*to[\s\-]*have", "desirable"),
     (r"(?:desirable|preferred|secondary|added|additional)\s*skills?", "desirable"),
     (r"nice[\s\-]*to[\s\-]*have", "nice_to_have"),
-    # Generic skill/technology section headers (default to the core/mandatory tier).
+    # Generic skill/technology section headers (default to the core/mandatory tier). These
+    # are deliberately SKILL-specific. We do NOT treat "Requirements", "Qualifications",
+    # "Responsibilities", "Key Responsibilities", "About the role" etc. as skill sections:
+    # those are prose/logistics and scooping their lines turns whole sentences, headings,
+    # dates, locations and salary into bogus skill criteria (the cause of candidates scoring
+    # ~5-28% against a garbage denominator). Skills from a prose JD are instead recovered by
+    # the known-skill gazetteer scan (see _GAZETTEER) which only matches real skill terms.
     (r"(?:technical|professional)\s*skills?", "mandatory"),
     (r"skills?(?:\s*(?:&|and)\s*(?:competenc|experience)\w*)?", "mandatory"),
     (r"(?:core\s*)?competenc(?:y|ies)", "mandatory"),
     (r"tech(?:nical)?\s*stack", "mandatory"),
     (r"technologies", "mandatory"),
     (r"tools?\s*(?:&|and)\s*technologies", "mandatory"),
-    (r"requirements?", "mandatory"),
-    (r"qualifications?", "mandatory"),
 )
 _SKILL_HEADER_RE = re.compile(
     r"^\s*(?:" + "|".join(p for p, _ in _SKILL_SECTION_HEADERS) + r")\s*:?\s*$",
@@ -152,8 +156,10 @@ _INLINE_HEADER_RE = re.compile(
     + r"))\s*:\s*(?P<rest>\S.*)$",
     re.IGNORECASE,
 )
-# Split a free-text requirement line into individual skill tokens.
-_SKILL_SPLIT = re.compile(r"\s*(?:,|;|/|\band\b|\bor\b|\|)\s*", re.IGNORECASE)
+# Split a free-text requirement line into individual skill tokens. A slash only separates
+# when it has surrounding whitespace ("AWS / Azure") — a tight slash like "TCP/IP", "CI/CD"
+# or "I/O" is part of a single compound skill token and must NOT be split.
+_SKILL_SPLIT = re.compile(r"\s*(?:,|;|\s/\s|\band\b|\bor\b|\|)\s*", re.IGNORECASE)
 # A leading "Expertise in", "Experience with", "Proficiency in" etc. before a skill list.
 _SKILL_LEADIN = re.compile(
     r"^\s*(?:expertise|experience|proficiency|proficient|skilled|knowledge|hands[\s\-]*on|"
@@ -203,6 +209,27 @@ _LONE_GENERIC: frozenset[str] = frozenset(
     {"monitoring", "security", "infrastructure", "secrets", "ci", "cd", "cicd",
      "field", "technical field", "technical", "computer science"}
 )
+# Action verbs that START a responsibility sentence ("Configure and troubleshoot...",
+# "Monitor and analyze...", "Provide L2 operational support"). A token beginning with one of
+# these is a duty, not a skill, so it is rejected. This stops a prose "Responsibilities"
+# section (or any sentence) from being chopped into bogus skill criteria.
+_RESPONSIBILITY_VERBS: frozenset[str] = frozenset(
+    {"provide", "configure", "troubleshoot", "maintain", "manage", "monitor", "analyze",
+     "analyse", "handle", "support", "perform", "coordinate", "ensure", "implement",
+     "deploy", "install", "review", "document", "escalate", "resolve", "respond",
+     "assist", "collaborate", "lead", "develop", "design", "build", "create", "define",
+     "execute", "operate", "administer", "optimize", "optimise", "validate", "conduct",
+     "prepare", "deliver", "work", "participate", "drive", "own", "track", "report"}
+)
+# A token that is really a section HEADING (e.g. "JOB DESCRIPTION", "KEY RESPONSIBILITIES",
+# "WALK-IN DETAILS") — all-caps multi-word labels are headings, not skills.
+_HEADING_WORDS: frozenset[str] = frozenset(
+    {"job", "description", "responsibilities", "responsibility", "details", "detail",
+     "overview", "summary", "role", "about", "company", "position", "walk-in", "walkin",
+     "drive", "venue", "date", "timing", "timings", "location", "eligibility", "benefits",
+     "compensation", "salary", "notes", "note", "process", "requirements", "requirement",
+     "qualifications", "qualification", "objective", "profile"}
+)
 
 
 def _normalise_skill_token(token: str) -> str | None:
@@ -219,13 +246,25 @@ def _normalise_skill_token(token: str) -> str | None:
     # Reject experience/qualification/compensation fragments.
     if _NON_SKILL_LINE.search(t):
         return None
-    # Strip trailing generic qualifier words, keeping the head skill.
     words = t.split()
+    first = words[0].lower().strip(".,")
+    # Reject a RESPONSIBILITY sentence/fragment that starts with an action verb
+    # ("Configure", "Monitor and analyze security events", "Provide L2 support"). These are
+    # duties, not skills.
+    if first in _RESPONSIBILITY_VERBS:
+        return None
+    # Reject a section HEADING ("JOB DESCRIPTION", "KEY RESPONSIBILITIES", "WALK-IN DETAILS").
+    # Any token whose words are all heading words is a label, not a skill.
+    if all(w.lower().strip(".,:") in _HEADING_WORDS for w in words):
+        return None
+    # Strip trailing generic qualifier words, keeping the head skill.
     while len(words) > 1 and words[-1].lower().strip(".") in _TRAILING_QUALIFIERS:
         words.pop()
     t = " ".join(words)
     # A skill token is short; a long remnant is prose, not a skill. Drop lone generics.
-    if not t or len(words) > 4 or t.lower() in _LONE_GENERIC:
+    # Tightened from 4 to 3 words: genuine skill names are rarely longer, and the looser
+    # limit let multi-word duty fragments through.
+    if not t or len(words) > 3 or t.lower() in _LONE_GENERIC:
         return None
     return t[:255]
 
@@ -257,6 +296,88 @@ def _split_skill_line(line: str) -> list[str]:
         if norm:
             out.append(norm)
     return out
+
+
+# --- Known-skill gazetteer -------------------------------------------------------------
+#
+# Many real JDs are pure prose with no clean "Skills:" list (just a title, responsibilities
+# and logistics). Chopping such prose into tokens produces garbage criteria. Instead we scan
+# the JD for a curated set of KNOWN skill terms and keep the ones literally present. This is
+# deterministic and non-inferring: a term is only added if it appears verbatim (word-
+# boundary, case-insensitive) in the JD. The gazetteer spans the role families this product
+# serves (networking/security, infra/cloud, programming, data, IT support). Extend as new
+# role families are onboarded. Multi-word entries are matched as phrases.
+_GAZETTEER: tuple[str, ...] = (
+    # Networking & security
+    "Firewall", "Firewalls", "VPN", "IPSec", "SSL VPN", "IDS", "IPS", "NAT", "Routing",
+    "Switching", "TCP/IP", "DNS", "DHCP", "BGP", "OSPF", "VLAN", "LAN", "WAN", "LAN/WAN",
+    "SD-WAN", "Proxy", "SIEM", "SOC", "Wireshark", "Palo Alto", "Fortinet", "FortiGate",
+    "Checkpoint", "Cisco", "Cisco ASA", "Juniper", "Sophos", "Zscaler", "Active Directory",
+    "Load Balancer", "F5", "Network Security", "Endpoint Security", "Penetration Testing",
+    "Vulnerability Assessment", "Nmap", "Nessus", "Burp Suite", "Access Control",
+    # Cloud & infra
+    "AWS", "Azure", "GCP", "Google Cloud", "Docker", "Kubernetes", "Terraform", "Ansible",
+    "Jenkins", "Linux", "Windows Server", "VMware", "Hyper-V", "Nginx", "Apache", "Bash",
+    "PowerShell", "Git", "CI/CD", "Prometheus", "Grafana", "ELK", "Helm",
+    # Programming & data
+    "Python", "Java", "JavaScript", "TypeScript", "C++", "C#", ".NET", "Go", "Golang",
+    "Rust", "PHP", "Ruby", "Node.js", "React", "Angular", "Vue", "Spring Boot", "Django",
+    "Flask", "FastAPI", "SQL", "MySQL", "PostgreSQL", "Oracle", "MongoDB", "Redis", "Kafka",
+    "REST", "REST APIs", "GraphQL", "Power BI", "Tableau", "Excel",
+    # IT support / desktop
+    "Troubleshooting", "Hardware", "Software Installation", "Operating Systems",
+    "Remote Desktop", "Ticketing", "ServiceNow", "Office 365", "Outlook", "Printers",
+    "Antivirus", "Patch Management", "Asset Management", "ITIL", "Incident Management",
+    # Soft/role skills commonly screened
+    "Communication", "Customer Service", "Technical Support", "Documentation",
+)
+# Precompiled phrase patterns (longest first so "LAN/WAN" wins over "LAN"/"WAN").
+_GAZETTEER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (
+        term,
+        re.compile(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])", re.IGNORECASE),
+    )
+    for term in sorted(_GAZETTEER, key=len, reverse=True)
+)
+
+
+def scan_known_skills(text: str) -> list[str]:
+    """Return the curated gazetteer skills that literally appear in the JD text, in gazetteer
+    order, de-duplicated case-insensitively. Deterministic, non-inferring: a skill is only
+    returned when it appears verbatim (word-boundary). This recovers real skills from a prose
+    JD that has no explicit skills section, without turning sentences into criteria.
+
+    Redundant near-duplicates are collapsed: a singular/plural pair keeps one form
+    ("Firewall"/"Firewalls" -> "Firewall"), and a token wholly contained in a longer matched
+    compound is dropped ("LAN" and "WAN" are dropped when "LAN/WAN" also matched) so the
+    generated criteria are not double-counted."""
+    present = {term for term, pat in _GAZETTEER_PATTERNS if pat.search(text)}
+
+    # Collapse singular/plural: if both "X" and "Xs" matched, keep only "X".
+    def _plural_dup(term: str) -> bool:
+        return term.endswith("s") and term[:-1] in present
+
+    kept: list[str] = []
+    seen: set[str] = set()
+    for term in _GAZETTEER:
+        if term not in present:
+            continue
+        key = term.lower()
+        if key in seen or _plural_dup(term):
+            continue
+        # Drop a short token that is a whole word inside a longer matched compound
+        # (e.g. "LAN"/"WAN" subsumed by "LAN/WAN"), avoiding double-weighting.
+        subsumed = any(
+            other != term
+            and other in present
+            and re.search(rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])", other)
+            for other in present
+        )
+        if subsumed:
+            continue
+        seen.add(key)
+        kept.append(term)
+    return kept
 
 
 def extract_tiered_skills(text: str) -> dict[str, list[str]]:
@@ -349,6 +470,21 @@ def extract_jd_draft(text: str) -> JDDraft:
     # JDVersion carries two skill columns, so nice-to-have is merged into desirable; both are
     # weighted, non-mandatory tiers in the rule generator.
     tiered = extract_tiered_skills(text)
+
+    # Known-skill gazetteer scan. Prose JDs (a title + responsibilities + logistics, no clean
+    # "Skills:" section) yield few or no tiered skills; the gazetteer recovers the REAL skill
+    # terms that literally appear in the text. We merge gazetteer hits into the MANDATORY tier
+    # only when they are not already captured under an explicit tier (so an explicit
+    # Good-to-Have skill keeps its tier). This keeps scoring meaningful for arbitrary JDs
+    # without turning prose sentences into criteria.
+    gazetteer = scan_known_skills(text)
+    already = {s.lower() for s in tiered["mandatory"] + tiered["desirable"]
+               + tiered["nice_to_have"]}
+    for skill in gazetteer:
+        if skill.lower() not in already:
+            tiered["mandatory"].append(skill)
+            already.add(skill.lower())
+
     draft.mandatory_skills = tiered["mandatory"]
     draft.nice_to_have_skills = tiered["nice_to_have"]
     seen_desirable = {s.lower() for s in tiered["desirable"]}

@@ -331,28 +331,33 @@ def run_screening(
 
     any_review = any(o.outcome is Outcome.MANUAL_REVIEW for o in all_outcomes)
 
-    # Weighted fit score (0..100) over the DECIDABLE criteria only.
+    # Weighted fit score (0..100).
     #
-    # A criterion routed to MANUAL_REVIEW has undecidable evidence (missing, low-confidence
-    # or conflicting). Counting its weight in the denominator while awarding 0 would make
-    # "evidence we could not verify" mathematically identical to "evidence that failed",
-    # which violates the product rule that missing evidence is NOT proof of absence
-    # (responsible-ai.md, product.md principle 7). So the percentage is computed over only
-    # the PASS/FAIL criteria; MANUAL_REVIEW criteria are excluded from BOTH numerator and
-    # denominator and instead surface through the independent review flag below. This keeps
-    # the number an honest "fit among what we could actually assess" while the run still
-    # routes to a human for the unverified parts. The score stays deterministic: the same
-    # evidence + rule version always yields the same decidable set and the same score.
-    # Decidable = PASS/FAIL only. MANUAL_REVIEW criteria (undecidable evidence: missing,
-    # low-confidence or conflicting) are excluded from BOTH numerator and denominator, so
-    # "evidence we could not verify" is not counted as a hard zero (responsible-ai.md,
-    # product.md principle 7); they surface through the review flag instead. A FAIL, by
-    # contrast, STAYS in the denominator at full weight with 0 awarded — this is how an
-    # optional skill the candidate did not demonstrate correctly lowers the fit percentage
-    # (a candidate with 2 of 5 desirable skills scores ~40% on skills, not 100%).
-    decidable = [o for o in all_outcomes if o.outcome is not Outcome.MANUAL_REVIEW]
-    total_max = sum(o.max_score for o in decidable)
-    total_awarded = sum(o.awarded_score for o in decidable)
+    # The denominator is the weight of every criterion the candidate COULD earn points for —
+    # i.e. every PASS/FAIL criterion PLUS any MANDATORY (must-have) criterion routed to
+    # review. Rationale:
+    #   - A must-have the resume did not confirm is still a core role requirement, so it
+    #     belongs in the denominator: the fit % must read "demonstrated X% of the role",
+    #     not silently drop the biggest requirements and inflate/colllapse the number. (It
+    #     still routes the run to human review via the mandatory-review flag below, and is
+    #     NEVER an automatic rejection — responsible-ai.md: missing != absent, route to a
+    #     human.) Previously these were excluded from the denominator, which made the score
+    #     be computed over only the leftover OPTIONAL skills — so a candidate who matched
+    #     most must-haves but whose must-haves could not all be auto-confirmed scored a
+    #     misleading 0-29%. Keeping them in the denominator gives an honest, intuitive fit %.
+    #   - An OPTIONAL (good/nice-to-have) criterion routed to review (undecidable, non-
+    #     mandatory) is excluded from BOTH numerator and denominator: an optional skill we
+    #     genuinely could not assess should neither earn nor cost points. Optional skills the
+    #     resume simply did not show are FAIL (in the denominator at 0) via the rule's
+    #     missing_evidence="fail", so they correctly lower the % without routing to review.
+    # The score stays deterministic: same evidence + rule version => same score.
+    scored = [
+        o
+        for o in all_outcomes
+        if o.outcome is not Outcome.MANUAL_REVIEW or o.mandatory
+    ]
+    total_max = sum(o.max_score for o in scored)
+    total_awarded = sum(o.awarded_score for o in scored)
 
     # When NOTHING is decidable (every criterion routed to review — e.g. a JD that yields
     # only mandatory skills none of which could be matched, plus experience with no evidence),
@@ -513,7 +518,7 @@ def execute_for_application(
     # the rule-set/JD was approved AFTER the candidate applied. Extraction at submit time
     # may have had no JD skills to match; re-matching here against the stored resume text
     # keeps every run current without re-processing the raw file.
-    _refresh_skill_matches(db, organisation_id, application)
+    _refresh_skill_matches(db, organisation_id, application, rule_set_version)
     # Fallback: if neither the candidate's answers nor structured extraction gave a years-of
     # -experience value, try to recover one from the raw resume text so the experience
     # criterion has something to evaluate instead of routing to review for a bare gap.
@@ -553,8 +558,40 @@ def execute_for_application(
     return result
 
 
+def _rule_set_skill_terms(rule_set_version: RuleSetVersion | None) -> list[str]:
+    """Collect the skill terms that the rule set actually scores (its exact_skill criteria),
+    walking logical AND/OR/NOT groups. These are the skills evidence must be matched against
+    so verified-skill evidence aligns 1:1 with the criteria — not whatever is stored on the
+    JD (which may be stale/noisy relative to a regenerated rule set)."""
+    terms: list[str] = []
+
+    def _walk(node: dict[str, Any]) -> None:
+        ctype = node.get("criterion_type")
+        if ctype == "exact_skill":
+            term = node.get("expected_value") or node.get("skill_id") or node.get("name")
+            if term:
+                terms.append(str(term))
+        elif ctype in ("and", "or"):
+            for child in node.get("children", []):
+                if isinstance(child, dict):
+                    _walk(child)
+        elif ctype == "not":
+            child = node.get("child")
+            if isinstance(child, dict):
+                _walk(child)
+
+    if rule_set_version is not None:
+        for rule in rule_set_version.rules or []:
+            if isinstance(rule, dict):
+                _walk(rule)
+    return terms
+
+
 def _refresh_skill_matches(
-    db: Session, organisation_id: uuid.UUID, application: Application
+    db: Session,
+    organisation_id: uuid.UUID,
+    application: Application,
+    rule_set_version: RuleSetVersion | None = None,
 ) -> None:
     """Re-match the campaign's JD skills against the candidate's stored resume text and
     upsert one skill:<name> field per JD skill. Idempotent: existing skill:* fields for the
@@ -582,17 +619,26 @@ def _refresh_skill_matches(
     if not resume_text.strip():
         return
 
-    campaign = db.get(Campaign, application.campaign_id)
-    if campaign is None or campaign.approved_jd_version_id is None:
-        return
-    jd = db.get(JDVersion, campaign.approved_jd_version_id)
-    if jd is None:
-        return
-    jd_skills = list(jd.mandatory_skills or []) + list(jd.desirable_skills or [])
+    # Match against the skills the RULE SET actually scores (its exact_skill criteria), not
+    # whatever is stored on the JD. The JD's stored skill list can be stale or noisy relative
+    # to a regenerated rule set (e.g. after a rescore that produced clean, gazetteer-derived
+    # skills); matching the resume against the JD list would then build skill:* evidence that
+    # does not line up with the criteria, so every criterion routes to review and the score
+    # collapses. Deriving the skills from the rule set guarantees evidence aligns 1:1 with the
+    # criteria being scored. Fall back to the JD's skills only when no rule set was supplied.
+    jd_skills = _rule_set_skill_terms(rule_set_version)
+    if not jd_skills:
+        campaign = db.get(Campaign, application.campaign_id)
+        if campaign is None or campaign.approved_jd_version_id is None:
+            return
+        jd = db.get(JDVersion, campaign.approved_jd_version_id)
+        if jd is None:
+            return
+        jd_skills = list(jd.mandatory_skills or []) + list(jd.desirable_skills or [])
     if not jd_skills:
         return
 
-    # Drop prior skill:* fields so the set exactly matches the current JD skills.
+    # Drop prior skill:* fields so the set exactly matches the current rule-set skills.
     for f in existing:
         if f.field_name.startswith("skill:"):
             db.delete(f)

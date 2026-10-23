@@ -128,10 +128,22 @@ _NON_SKILL_PHRASE = re.compile(
 
 
 def _is_skill_like(entry: str) -> bool:
+    """True if an entry is a plausible skill token (not a responsibility sentence, heading,
+    location, date, salary or other prose fragment).
+
+    Delegates to the JD extractor's token normaliser as the single source of truth: if the
+    extractor would reject the entry as not-a-skill (leading action verb, all-heading words,
+    experience/qualification/compensation fragment, too long), the rule generator rejects it
+    too. This cleans GARBAGE stored skill lists (e.g. a JD approved before the extractor was
+    hardened, whose mandatory_skills contained 'Provide L2 operational', 'WALK-IN DETAILS',
+    'October 2026', 'Maharashtra 400093') so regenerated criteria contain only real skills.
+    """
     text = entry.strip()
     if not text or _NON_SKILL_PHRASE.search(text):
         return False
-    return len(text.split()) <= 6
+    from app.modules.extraction.jd_extractor import _normalise_skill_token
+
+    return _normalise_skill_token(text) is not None
 
 
 def _experience_criterion(min_years: float) -> dict[str, Any]:
@@ -171,6 +183,72 @@ def build_rules_from_jd(
     return rules
 
 
+def _clean_jd_skills(jd: Any) -> tuple[list[str], list[str]]:
+    """Derive clean (mandatory, desirable) skill lists for rule generation from a JD version.
+
+    Robust against a JD whose stored skill lists are noisy (e.g. approved before the
+    extractor was hardened, so mandatory_skills holds responsibility sentences, headings,
+    dates and addresses). Strategy, in order of trust:
+      1. Run the known-skill gazetteer over the JD's extracted text (extraction_draft) — the
+         most reliable signal, since it only returns real skill terms literally present.
+      2. Keep stored skills that still pass the (now stricter) _is_skill_like filter.
+      3. Merge: gazetteer hits + surviving stored skills, de-duplicated, preserving tiers
+         (stored desirable stays desirable; gazetteer hits are mandatory core skills).
+    The result feeds build_rules_from_jd, which applies _is_skill_like once more as a final
+    guard.
+    """
+    from app.modules.extraction.jd_extractor import scan_known_skills
+
+    draft = jd.extraction_draft if isinstance(jd.extraction_draft, dict) else {}
+    # The stored draft keeps the extracted text pieces; reconstruct a scannable blob from the
+    # draft fields, responsibilities and the skill names themselves.
+    blob_parts: list[str] = []
+    for key in ("responsibilities", "mandatory_skills", "desirable_skills"):
+        val = draft.get(key)
+        if isinstance(val, list):
+            blob_parts.extend(str(x) for x in val)
+    blob_parts.extend(str(s) for s in (jd.mandatory_skills or []))
+    blob_parts.extend(str(s) for s in (jd.desirable_skills or []))
+    gazetteer = scan_known_skills("\n".join(blob_parts))
+
+    stored_mandatory = [s for s in (jd.mandatory_skills or []) if _is_skill_like(s)]
+    stored_desirable = [s for s in (jd.desirable_skills or []) if _is_skill_like(s)]
+
+    # When the gazetteer recognises a usable set of real skills, TRUST IT ALONE for the
+    # mandatory tier and discard the stored mandatory list. A stored list for a prose JD is
+    # frequently noise (responsibility fragments, headings, single generic words like
+    # "objects"/"problem"/"alerts"/"Server") that individually slip past _is_skill_like but
+    # collectively bloat the denominator and crater every score. The gazetteer only returns
+    # curated, real skill terms literally present in the JD, so it is the trustworthy source.
+    # We only FALL BACK to the filtered stored mandatory list when the gazetteer found
+    # essentially nothing (an unusual role not covered by the gazetteer yet), so we still
+    # build a defensible rule set rather than none.
+    if len(gazetteer) >= 3:
+        mandatory_source = gazetteer
+    else:
+        seen0: set[str] = {g.lower() for g in gazetteer}
+        mandatory_source = gazetteer + [
+            s for s in stored_mandatory if s.strip().lower() not in seen0
+        ]
+
+    seen: set[str] = set()
+    mandatory: list[str] = []
+    for s in mandatory_source:
+        key = s.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            mandatory.append(s)
+    # Keep explicitly-tiered desirable skills only when they are gazetteer-recognised real
+    # skills (so an explicit "Good to Have: Python" is honoured, but stored desirable noise
+    # is dropped). Desirable that duplicates a mandatory entry is skipped.
+    gaz_lower = {g.lower() for g in gazetteer}
+    desirable = [
+        s for s in stored_desirable
+        if s.strip().lower() in gaz_lower and s.strip().lower() not in seen
+    ]
+    return mandatory, desirable
+
+
 def create_rule_set_version_from_jd(
     db: Session,
     *,
@@ -195,9 +273,10 @@ def create_rule_set_version_from_jd(
     if jd is None:
         raise NotFoundError("Approved JD version not found")
 
+    mandatory, desirable = _clean_jd_skills(jd)
     rules = build_rules_from_jd(
-        mandatory_skills=list(jd.mandatory_skills or []),
-        desirable_skills=list(jd.desirable_skills or []),
+        mandatory_skills=mandatory,
+        desirable_skills=desirable,
         minimum_total_experience_years=jd.minimum_total_experience_years,
     )
     if not rules:
