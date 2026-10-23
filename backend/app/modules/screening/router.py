@@ -19,7 +19,7 @@ from app.modules.identity.schemas import AuthenticatedActor
 from app.modules.rules import repository as rules_repo
 from app.modules.screening import service
 from app.modules.screening.models import ScreeningRun
-from app.modules.screening.schemas import ScreeningRunRead
+from app.modules.screening.schemas import RescoreSummaryRead, ScreeningRunRead
 
 router = APIRouter(prefix="/api/v1/screening", tags=["screening"])
 
@@ -68,3 +68,28 @@ def list_runs(
     )
     runs = db.execute(stmt).scalars().all()
     return [ScreeningRunRead.model_validate(r) for r in runs]
+
+
+@router.post("/campaigns/{campaign_id}/rescore", response_model=RescoreSummaryRead)
+def rescore_campaign(
+    campaign_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> RescoreSummaryRead:
+    """Repair a campaign whose candidates are stuck at 0/100 because its approved rule-set
+    had no JD-derived skill criteria. Regenerates the criteria from the approved JD (four-eyes
+    preserved: a system identity authors, this human approves) and re-screens every
+    application as a NEW immutable run. Nothing is reset or deleted; prior runs are retained.
+
+    Requires rule.approve (the caller is approving the regenerated criteria) and object-level
+    campaign authorisation.
+    """
+    require_campaign_permission(actor, Permission.RULE_APPROVE, campaign_id)
+    summary = service.rescore_campaign(
+        db, organisation_id=actor.organisation_id, campaign_id=campaign_id, actor=actor
+    )
+    return RescoreSummaryRead(
+        rescored=summary.rescored,
+        criteria_count=summary.criteria_count,
+        progressed=summary.progressed,
+    )

@@ -147,6 +147,34 @@ def panel_worklist(db: Session, organisation_id: uuid.UUID) -> list[dict[str, An
     return out
 
 
+# Application states in which a candidate is actively on a panel member's interview
+# worklist. A panel member (assessment.submit) may read JUST this candidate's resume,
+# application and extracted fields while the candidate is in one of these states — the
+# minimal context needed to conduct and record the interview. Outside these states (e.g. a
+# candidate still in screening, or long after the interview) a panel member has no access.
+PANEL_INTERVIEW_STATES: frozenset[str] = frozenset(_PANEL_STATE_STAGE)
+
+
+def panel_member_may_view_candidate(
+    db: Session, *, organisation_id: uuid.UUID, application: Application
+) -> bool:
+    """True if an interview-panel member is allowed to read this candidate's interview
+    context (resume / application / extracted fields).
+
+    Access is scoped by APPLICATION STATE, not campaign assignment: panel members are
+    invited to interview specific candidates rather than assigned as campaign authors, so
+    the authoritative signal is that the application is currently in the interview lifecycle
+    (scheduled through checked-out). This deliberately grants NO access to candidates still
+    in screening/review, and exposes no screening internals — only the interview-context
+    documents the panel needs. Object-level safety is preserved: the caller has already
+    loaded THIS application, and only this candidate's data is returned.
+    """
+    return (
+        application.organisation_id == organisation_id
+        and application.state in PANEL_INTERVIEW_STATES
+    )
+
+
 def submit_assessment(
     db: Session,
     *,

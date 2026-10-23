@@ -224,3 +224,50 @@ def test_resume_download_404_when_no_resume(client, engine) -> None:
     admin = _login(client, s["admin_email"])
     r = client.get(f"/api/v1/documents/applications/{app_id}/resume", headers=admin)
     assert r.status_code == 404, r.text
+
+
+def test_panel_can_read_interview_context_for_checked_in_candidate(client, engine) -> None:
+    """An interview-panel member (assessment.submit only, NOT candidate.view, NOT campaign-
+    assigned) can read the resume, the application, and the extracted fields for a candidate
+    they are actively interviewing (application checked in). This is the narrow grant that
+    makes the panel's Resume and Application Form tabs work (previously they 403'd with
+    "Missing required permission: candidate.view")."""
+    s = _seed(engine)
+    application_id = _apply(client, s["campaign_id"])
+    invitation_id = _drive_to_scheduled(engine, application_id, s["campaign_id"], s["admin_email"])
+    panel = _login(client, s["panel_email"])
+
+    # Scheduled (pre check-in) is already an interview-lifecycle state -> panel may read.
+    r = client.get(f"/api/v1/documents/applications/{application_id}/resume", headers=panel)
+    assert r.status_code == 200, r.text
+    assert r.content == RESUME
+
+    r = client.get(f"/api/v1/applications/{application_id}", headers=panel)
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == application_id
+
+    r = client.get(f"/api/v1/applications/{application_id}/extracted-fields", headers=panel)
+    assert r.status_code == 200, r.text
+    assert isinstance(r.json(), list)
+
+    # Check the candidate in; still in the interview lifecycle -> still readable.
+    r = client.post(f"/api/v1/interviews/invitations/{invitation_id}/check-in", headers=panel)
+    assert r.status_code == 200, r.text
+    r = client.get(f"/api/v1/documents/applications/{application_id}/resume", headers=panel)
+    assert r.status_code == 200, r.text
+
+
+def test_panel_cannot_read_context_for_candidate_not_in_interview(client, engine) -> None:
+    """A panel member is refused the resume/application for a candidate who is NOT in the
+    interview lifecycle (e.g. still being screened). The panel grant is scoped strictly to
+    candidates they are actively interviewing; it does not widen to all candidates."""
+    s = _seed(engine)
+    application_id = _apply(client, s["campaign_id"])  # lands in extraction/screened, not interview
+    panel = _login(client, s["panel_email"])
+
+    r = client.get(f"/api/v1/documents/applications/{application_id}/resume", headers=panel)
+    assert r.status_code == 403, r.text
+    r = client.get(f"/api/v1/applications/{application_id}", headers=panel)
+    assert r.status_code == 403, r.text
+    r = client.get(f"/api/v1/applications/{application_id}/extracted-fields", headers=panel)
+    assert r.status_code == 403, r.text

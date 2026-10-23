@@ -280,7 +280,9 @@ def get_application(
     actor: AuthenticatedActor = Depends(get_current_actor),
 ) -> ApplicationRead:
     app = service.get_application(db, actor.organisation_id, application_id)
-    require_campaign_permission(actor, Permission.CANDIDATE_VIEW, app.campaign_id)
+    # candidate.view+campaign for staff, OR an interview-panel member for a candidate they
+    # are actively interviewing (so the panel's Application Form tab works).
+    service.authorize_candidate_context_read(db, actor=actor, application=app)
     return ApplicationRead.model_validate(app)
 
 
@@ -291,7 +293,9 @@ def list_extracted_fields(
     actor: AuthenticatedActor = Depends(get_current_actor),
 ) -> list[ExtractedFieldRead]:
     app = service.get_application(db, actor.organisation_id, application_id)
-    require_campaign_permission(actor, Permission.CANDIDATE_VIEW, app.campaign_id)
+    # candidate.view+campaign for staff, OR an interview-panel member for a candidate they
+    # are actively interviewing (so the panel's Application Form tab can show parsed fields).
+    service.authorize_candidate_context_read(db, actor=actor, application=app)
     fields = extraction_service.list_fields(db, actor.organisation_id, application_id)
     return [ExtractedFieldRead.model_validate(f) for f in fields]
 

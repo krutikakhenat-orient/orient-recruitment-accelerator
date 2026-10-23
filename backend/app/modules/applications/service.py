@@ -580,6 +580,54 @@ def get_application(
     return app
 
 
+def authorize_candidate_context_read(
+    db: Session, *, actor: Any, application: Application
+) -> None:
+    """Authorise reading a candidate's interview context (resume / application / extracted
+    fields) for the given application.
+
+    Two independent paths grant access, whichever applies:
+      1. Staff with ``candidate.view`` who are assigned to the application's campaign
+         (the standard object-level recruiter/HR path).
+      2. An interview-panel member (``assessment.submit``) while the candidate is actively
+         on the interview worklist (application in an interview-lifecycle state). Panel
+         members are invited to interview specific candidates rather than campaign-assigned,
+         so campaign assignment is NOT required for this path — but access is strictly
+         scoped to candidates they are currently interviewing and exposes no screening
+         internals. This is the narrow grant that lets the panel's Resume and Application
+         Form tabs work without handing panel members broad candidate.view.
+
+    Raises PermissionDeniedError when neither path applies. Defence-in-depth: callers still
+    load exactly ONE application, so only that candidate's data is ever returned.
+    """
+    # Local imports avoid a circular import (assessments.service imports applications).
+    from app.modules.assessments import service as assessment_service
+    from app.modules.identity.permissions import Permission
+    from app.modules.identity.policy import (
+        can_access_campaign,
+        has_permission,
+        require_campaign_permission,
+    )
+
+    # Path 1: standard candidate.view + campaign assignment.
+    if has_permission(actor, Permission.CANDIDATE_VIEW) and can_access_campaign(
+        actor, application.campaign_id
+    ):
+        return
+
+    # Path 2: panel member actively interviewing THIS candidate.
+    if has_permission(actor, Permission.ASSESSMENT_SUBMIT) and (
+        assessment_service.panel_member_may_view_candidate(
+            db, organisation_id=application.organisation_id, application=application
+        )
+    ):
+        return
+
+    # Neither path applies: fall back to the standard error (missing candidate.view /
+    # not assigned), which is the clearest message for the common staff case.
+    require_campaign_permission(actor, Permission.CANDIDATE_VIEW, application.campaign_id)
+
+
 def list_for_campaign(
     db: Session,
     organisation_id: uuid.UUID,

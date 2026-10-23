@@ -23,8 +23,6 @@ from app.modules.applications import service as application_service
 from app.modules.documents import service as document_service
 from app.modules.documents.models import DocumentKind
 from app.modules.documents.storage import default_object_store
-from app.modules.identity.permissions import Permission
-from app.modules.identity.policy import require_campaign_permission
 from app.modules.identity.schemas import AuthenticatedActor
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
@@ -47,13 +45,15 @@ def download_application_resume(
 ) -> Response:
     """Download the resume for a specific application.
 
-    Authorisation: candidate.view + assignment to the application's campaign (object-level
-    authz) — the resume belongs to the selected candidate and to no other. Returns 404 when
-    the application has no resume on file or the document is not available (e.g. never
-    passed the scan), so callers can show a clear 'resume not available' message.
+    Authorisation (object-level): either staff with candidate.view assigned to the
+    application's campaign, OR an interview-panel member while the candidate is actively on
+    the interview worklist (so the panel's Resume tab works without broad candidate.view).
+    The resume belongs to the selected candidate and to no other. Returns 404 when the
+    application has no resume on file or the document is not available (e.g. never passed
+    the scan), so callers can show a clear 'resume not available' message.
     """
     app = application_service.get_application(db, actor.organisation_id, application_id)
-    require_campaign_permission(actor, Permission.CANDIDATE_VIEW, app.campaign_id)
+    application_service.authorize_candidate_context_read(db, actor=actor, application=app)
 
     if app.resume_document_id is None:
         raise NotFoundError("No resume is on file for this application")

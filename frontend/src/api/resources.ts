@@ -382,6 +382,22 @@ export const runScreening = (applicationId: string) =>
 export const listScreeningRuns = (applicationId: string) =>
   apiFetch(`/api/v1/screening/applications/${applicationId}/runs`, z.array(screeningRun));
 
+// Repair a campaign whose candidates are stuck at 0/100 because its approved rule-set had
+// no JD-derived skill criteria. Regenerates criteria from the approved JD (four-eyes
+// preserved server-side) and re-screens every application as a NEW immutable run. Requires
+// rule.approve + campaign access. Nothing is reset or deleted.
+export const rescoreSummary = z.object({
+  rescored: z.number(),
+  criteria_count: z.number(),
+  progressed: z.number(),
+});
+export type RescoreSummary = z.infer<typeof rescoreSummary>;
+
+export const rescoreCampaign = (campaignId: string) =>
+  apiFetch(`/api/v1/screening/campaigns/${campaignId}/rescore`, rescoreSummary, {
+    method: "POST",
+  });
+
 // ---------- Review ----------
 export const reviewItem = z
   .object({

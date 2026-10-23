@@ -25,6 +25,15 @@ class CriterionResultRead(BaseModel):
     reason: str
 
 
+class RescoreSummaryRead(BaseModel):
+    """Result of repairing a campaign: how many applications were re-screened against the
+    freshly regenerated JD-derived criteria, and how many progressed to the interview panel."""
+
+    rescored: int
+    criteria_count: int
+    progressed: int
+
+
 class ScreeningRunRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
