@@ -131,7 +131,9 @@ def test_partial_skill_match_produces_graduated_score(db_session) -> None:
     ).run
 
     # The crux: NOT the degenerate 0 or 100.
+    detail = [
+        (r.criterion_name, r.outcome, r.awarded_score, r.max_score) for r in run.results
+    ]
     assert 0.0 < run.score < 100.0, (
-        f"expected a graduated score, got {run.score}; "
-        f"results={[(r.criterion_name, r.outcome, r.awarded_score, r.max_score) for r in run.results]}"
+        f"expected a graduated score, got {run.score}; results={detail}"
     )
