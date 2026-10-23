@@ -27,6 +27,7 @@ from app.modules.identity.models import User
 from app.modules.identity.permissions import Permission
 from app.modules.identity.schemas import AuthenticatedActor
 from app.modules.job_descriptions import service as jd_service
+from app.modules.job_descriptions.models import JDVersion
 from app.modules.job_descriptions.schemas import JDVersionUpdate
 from app.modules.rules import service as rules_service
 from app.modules.rules.models import RuleSetVersion, ThresholdSet
@@ -60,6 +61,15 @@ _SYNTHETIC_JD_TEXT = (
     b"\n"
     b"Minimum Total Experience: 1 year\n"
 )
+
+# The same tiered skills the synthetic JD text encodes, as structured lists. Used to BACKFILL
+# an existing approved JD that has no skills (e.g. a real JD whose document yielded none, or
+# one approved before skill extraction), so the dev open-now flow can still build graduated
+# scoring criteria. JDVersion carries two skill columns, so nice-to-have is merged into
+# desirable (both are weighted, non-mandatory tiers in the rule generator).
+_SYNTHETIC_MANDATORY_SKILLS = ["Python", "SQL", "REST APIs"]
+_SYNTHETIC_DESIRABLE_SKILLS = ["Docker", "PostgreSQL", "React", "Kubernetes", "GraphQL"]
+_SYNTHETIC_MIN_EXPERIENCE_YEARS = 1.0
 
 
 def _dev_actor(campaign: Campaign) -> AuthenticatedActor:
@@ -107,6 +117,52 @@ def _ensure_skill_based_rules(
             db, organisation_id=org, campaign_id=campaign.id, approver_id=approver_id
         )
         db.refresh(campaign)
+
+
+def _backfill_skills_if_empty(
+    db: Session, *, org: uuid.UUID, campaign: Campaign, actor_id: uuid.UUID
+) -> None:
+    """If the campaign's approved JD has no skills and no minimum experience, revise it into
+    a new draft, backfill the synthetic tiered skills + minimum experience, and re-approve.
+
+    This is the dev-only repair for a campaign whose approved JD yielded no scoring signal
+    (a real JD document that extracted no skills, or one approved before extraction existed).
+    Approved JD versions are immutable, so we clone via ``revise_jd_version`` (the original
+    approved version is preserved), edit the draft, and re-approve — which re-points the
+    campaign and triggers JD-derived criteria generation. No-op when the JD already has
+    usable skills or experience."""
+    jd = db.get(JDVersion, campaign.approved_jd_version_id)
+    if jd is None:
+        return
+    has_signal = bool(jd.mandatory_skills or jd.desirable_skills) or (
+        jd.minimum_total_experience_years is not None
+        and jd.minimum_total_experience_years > 0
+    )
+    if has_signal:
+        return
+
+    draft = jd_service.revise_jd_version(
+        db, organisation_id=org, approved_version_id=jd.id, actor_id=actor_id
+    )
+    jd_service.update_jd_version(
+        db,
+        organisation_id=org,
+        jd_version_id=draft.id,
+        actor_id=actor_id,
+        data=JDVersionUpdate(
+            mandatory_skills=list(_SYNTHETIC_MANDATORY_SKILLS),
+            desirable_skills=list(_SYNTHETIC_DESIRABLE_SKILLS),
+            minimum_total_experience_years=_SYNTHETIC_MIN_EXPERIENCE_YEARS,
+        ),
+    )
+    jd_service.approve_jd_version(
+        db,
+        organisation_id=org,
+        jd_version_id=draft.id,
+        actor_id=actor_id,
+        change_reason="dev autopilot: backfill synthetic skills for scoring",
+    )
+    db.refresh(campaign)
 
 
 def open_campaign_now(
@@ -168,6 +224,14 @@ def open_campaign_now(
             change_reason="dev autopilot",
         )
         campaign_service.set_approved_jd_version(db, campaign, jd.id, actor_id)
+    else:
+        # A JD is already approved. If it has NO skills and NO minimum experience, the dev
+        # flow cannot build scoring criteria from it (the "approved JD lists no skills or
+        # experience" error). This happens when a real JD document yielded no extractable
+        # skills, or was approved before skill extraction existed. Approved JDs are
+        # immutable, so we REVISE it into a new draft, backfill the synthetic tiered skills +
+        # minimum experience, and re-approve — the original approved version is preserved.
+        _backfill_skills_if_empty(db, org=org, campaign=campaign, actor_id=actor_id)
 
     # --- 2. Rule set: derived from the JUST-APPROVED JD's tiered skills + experience. ---
     # Approving the JD above already auto-generates and approves JD-derived scoring criteria

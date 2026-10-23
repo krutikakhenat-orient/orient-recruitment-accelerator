@@ -53,6 +53,15 @@ _MIN_EXPERIENCE = re.compile(
     r"(?:[^.\n]*?\bexperience\b)",
     re.IGNORECASE,
 )
+# Labelled experience where the figure comes AFTER the label, e.g.
+# "Experience: 5 years", "Experience Required: 3+ yrs", "Total Experience - 4 years".
+# Complements _MIN_EXPERIENCE (which needs 'experience' to follow the number). The figure is
+# taken as the LOWER bound of a range ("3-5 years" -> 3).
+_LABELLED_EXPERIENCE = re.compile(
+    r"\b(?:total\s+|relevant\s+|work\s+|professional\s+)?experience"
+    r"(?:\s+required)?\s*[:\-]\s*(\d{1,2})\+?",
+    re.IGNORECASE,
+)
 _OPENINGS = re.compile(
     r"(?:number\s+of\s+openings|openings|vacancies|positions)\s*[:\-]?\s*(\d{1,3})",
     re.IGNORECASE,
@@ -109,16 +118,38 @@ def _collect_list_section(text: str, header_pattern: str, limit: int = 25) -> li
 # never guesses a skill that isn't there (responsible-ai.md).
 
 # Section header -> which tier the skills under it belong to (until the next header/blank).
+# Ordered: more specific tiered headers first, then broader generic skill/technology headers
+# that map to the "mandatory" default tier (a plain "Skills:" / "Tech Stack:" list is treated
+# as core/required unless a desirable/nice header says otherwise). This broad set is what
+# lets the extractor pull skills from an ARBITRARY JD, not only ones using the exact
+# "Must Have / Good to Have" wording.
 _SKILL_SECTION_HEADERS: tuple[tuple[str, str], ...] = (
     (r"must[\s\-]*have", "mandatory"),
-    (r"(?:mandatory|required|key)\s*skills?", "mandatory"),
-    (r"requirements?", "mandatory"),
+    (r"(?:mandatory|required|key|core|essential|primary)\s*skills?", "mandatory"),
     (r"good[\s\-]*to[\s\-]*have", "desirable"),
-    (r"(?:desirable|preferred)\s*skills?", "desirable"),
+    (r"(?:desirable|preferred|secondary|added|additional)\s*skills?", "desirable"),
     (r"nice[\s\-]*to[\s\-]*have", "nice_to_have"),
+    # Generic skill/technology section headers (default to the core/mandatory tier).
+    (r"(?:technical|professional)\s*skills?", "mandatory"),
+    (r"skills?(?:\s*(?:&|and)\s*(?:competenc|experience)\w*)?", "mandatory"),
+    (r"(?:core\s*)?competenc(?:y|ies)", "mandatory"),
+    (r"tech(?:nical)?\s*stack", "mandatory"),
+    (r"technologies", "mandatory"),
+    (r"tools?\s*(?:&|and)\s*technologies", "mandatory"),
+    (r"requirements?", "mandatory"),
+    (r"qualifications?", "mandatory"),
 )
 _SKILL_HEADER_RE = re.compile(
     r"^\s*(?:" + "|".join(p for p, _ in _SKILL_SECTION_HEADERS) + r")\s*:?\s*$",
+    re.IGNORECASE,
+)
+# A header that may carry skills INLINE after a colon, e.g. "Key Skills: Python, SQL, AWS".
+# Captures the header label (group 1 = tier-matching text) and the inline remainder (group 2)
+# so the skills on the same line as the header are not lost.
+_INLINE_HEADER_RE = re.compile(
+    r"^\s*(?P<label>(?:"
+    + "|".join(p for p, _ in _SKILL_SECTION_HEADERS)
+    + r"))\s*:\s*(?P<rest>\S.*)$",
     re.IGNORECASE,
 )
 # Split a free-text requirement line into individual skill tokens.
@@ -132,7 +163,22 @@ _SKILL_LEADIN = re.compile(
 )
 
 
+def _tier_for_label(label: str) -> str | None:
+    """Resolve a header label string (e.g. 'Key Skills', 'Tech Stack') to its tier, or None.
+
+    The FIRST matching pattern wins, so the ordering in _SKILL_SECTION_HEADERS (specific
+    must/good/nice first, then generic skill/tech headers) determines precedence.
+    """
+    for pattern, tier in _SKILL_SECTION_HEADERS:
+        if re.search(rf"\b{pattern}\b", label, re.IGNORECASE):
+            return tier
+    return None
+
+
 def _tier_for_header(line: str) -> str | None:
+    """Return the tier for a line that is ESSENTIALLY just a section header (a short label),
+    not a full sentence that merely mentions the words. Used for header-only lines where the
+    skills appear on the following lines."""
     for pattern, tier in _SKILL_SECTION_HEADERS:
         # Only treat as a header when the line is essentially JUST the header (a label),
         # not a full sentence that merely mentions the words.
@@ -226,22 +272,39 @@ def extract_tiered_skills(text: str) -> dict[str, list[str]]:
     seen: set[str] = set()
     active: str | None = None
 
+    def _add(tier: str, line_text: str) -> None:
+        for skill in _split_skill_line(line_text):
+            key = skill.lower()
+            if key not in seen:
+                seen.add(key)
+                result[tier].append(skill)
+
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             active = None  # a blank line ends the current section
             continue
+
+        # Case A: a header with skills INLINE on the same line ("Key Skills: Python, SQL").
+        # Capture the inline skills AND switch the active tier so following lines continue it.
+        inline = _INLINE_HEADER_RE.match(line)
+        if inline is not None:
+            tier = _tier_for_label(inline.group("label"))
+            if tier is not None:
+                active = tier
+                _add(tier, inline.group("rest"))
+                continue
+
+        # Case B: a header-only line ("Must Have:"). Switch the active tier; skills follow.
         tier = _tier_for_header(line)
         if tier is not None:
             active = tier
             continue
+
+        # Case C: a body line under the active section.
         if active is None:
             continue
-        for skill in _split_skill_line(line):
-            key = skill.lower()
-            if key not in seen:
-                seen.add(key)
-                result[active].append(skill)
+        _add(active, line)
     return result
 
 
@@ -261,7 +324,7 @@ def extract_jd_draft(text: str) -> JDDraft:
                                   source_span=_clean(match.group(0)))
                 )
 
-    exp = _MIN_EXPERIENCE.search(text)
+    exp = _MIN_EXPERIENCE.search(text) or _LABELLED_EXPERIENCE.search(text)
     if exp:
         draft.fields.append(
             ProposedField("minimum_total_experience_years", exp.group(1), 0.75,

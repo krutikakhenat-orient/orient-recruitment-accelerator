@@ -124,3 +124,63 @@ def test_minimum_experience_still_captured_as_scalar() -> None:
     draft = extract_jd_draft(JD)
     by_name = {f.name: f.value for f in draft.fields}
     assert by_name.get("minimum_total_experience_years") == "1"
+
+
+# --- Arbitrary JD formats: skills must be extractable regardless of the exact wording -----
+# A JD does not have to use the "Must Have / Good to Have" headers. The extractor also
+# handles inline skills on the header line, generic "Skills:" / "Technical Skills:" /
+# "Tech Stack:" / "Core Skills:" headers, and labelled experience ("Experience: N years").
+
+def test_inline_header_skills_on_same_line() -> None:
+    draft = extract_jd_draft(
+        "Position Title: Backend Engineer\n"
+        "Key Skills: Python, Django, PostgreSQL, Redis, Docker\n"
+        "Experience: 4 years\n"
+    )
+    mand = {s.lower() for s in draft.mandatory_skills}
+    assert {"python", "django", "postgresql", "redis", "docker"} <= mand
+    by_name = {f.name: f.value for f in draft.fields}
+    assert by_name.get("minimum_total_experience_years") == "4"
+
+
+def test_generic_skills_header_following_lines() -> None:
+    draft = extract_jd_draft(
+        "Skills:\n- Java\n- Spring Boot\n- Kafka\n- Kubernetes\n\n"
+        "Minimum 5 years of experience required.\n"
+    )
+    mand = {s.lower() for s in draft.mandatory_skills}
+    assert {"java", "spring boot", "kafka", "kubernetes"} <= mand
+    by_name = {f.name: f.value for f in draft.fields}
+    assert by_name.get("minimum_total_experience_years") == "5"
+
+
+def test_tech_stack_header_and_labelled_experience() -> None:
+    draft = extract_jd_draft(
+        "Tech Stack: React, TypeScript, Node.js, GraphQL\nTotal Experience - 3 years\n"
+    )
+    mand = {s.lower() for s in draft.mandatory_skills}
+    assert {"react", "typescript", "node.js", "graphql"} <= mand
+    by_name = {f.name: f.value for f in draft.fields}
+    assert by_name.get("minimum_total_experience_years") == "3"
+
+
+def test_core_skills_header_with_plus_experience() -> None:
+    draft = extract_jd_draft(
+        "Position Title: Network Security Engineer L2\n"
+        "Core Skills: Firewalls, VPN, IDS, IPS, Wireshark\n"
+        "Experience Required: 6+ years\n"
+    )
+    mand = {s.lower() for s in draft.mandatory_skills}
+    assert {"firewalls", "vpn", "ids", "ips", "wireshark"} <= mand
+    by_name = {f.name: f.value for f in draft.fields}
+    assert by_name.get("minimum_total_experience_years") == "6"
+
+
+def test_technical_skills_section_with_good_to_have() -> None:
+    draft = extract_jd_draft(
+        "Technical Skills\nAWS, Terraform, Linux, Bash\n\nGood to Have: Go, Rust\n"
+    )
+    mand = {s.lower() for s in draft.mandatory_skills}
+    des = {s.lower() for s in draft.desirable_skills}
+    assert {"aws", "terraform", "linux", "bash"} <= mand
+    assert {"go", "rust"} <= des
