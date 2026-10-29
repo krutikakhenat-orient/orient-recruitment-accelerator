@@ -16,6 +16,7 @@ from app.modules.documents import models as document_models  # noqa: F401
 from app.modules.extraction import models as extraction_models  # noqa: F401
 from app.modules.forms import models as form_models  # noqa: F401
 from app.modules.identity import models as identity_models  # noqa: F401
+from app.modules.induction import models as induction_models  # noqa: F401
 from app.modules.interviews import models as interview_models  # noqa: F401
 from app.modules.job_descriptions import models as jd_models  # noqa: F401
 from app.modules.privacy import models as privacy_models  # noqa: F401

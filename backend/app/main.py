@@ -33,6 +33,7 @@ from app.modules.dev.router import router as dev_router
 from app.modules.documents.router import router as documents_router
 from app.modules.forms.router import router as forms_router
 from app.modules.identity.router import router as identity_router
+from app.modules.induction.router import router as induction_router
 from app.modules.interviews.router import router as interviews_router
 from app.modules.job_descriptions.router import router as jd_router
 from app.modules.privacy.router import router as privacy_router
@@ -163,6 +164,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
 def _register_routers(app: FastAPI) -> None:
     app.include_router(identity_router)
+    app.include_router(induction_router)
     app.include_router(audit_router)
     app.include_router(projects_router)
     app.include_router(campaigns_router)

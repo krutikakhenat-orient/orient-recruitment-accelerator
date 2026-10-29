@@ -46,6 +46,9 @@ class Permission(str, Enum):
     PRIVACY_REQUEST_MANAGE = "privacy_request.manage"
     USER_MANAGE = "user.manage"
     SYSTEM_CONFIGURE = "system.configure"
+    # Employee self-service induction: view the induction video, mark it complete, and
+    # obtain the completion certificate. Granted ONLY to RoleName.EMPLOYEE.
+    INDUCTION_VIEW = "induction.view"
 
 
 class RoleName(str, Enum):
@@ -81,6 +84,10 @@ class RoleName(str, Enum):
     AUDIT_VIEWER = "audit_viewer"
     SYSTEM_ADMIN = "system_admin"
     CANDIDATE = "candidate"
+    # Employee self-service: an onboarded employee whose only grant is the induction
+    # experience (watch the induction video, mark it complete, download the certificate).
+    # It is intentionally NOT an operational staff role.
+    EMPLOYEE = "employee"
 
 
 # The operational roles a staff member is assigned in the 3-tier model.
@@ -145,4 +152,10 @@ DEFAULT_ROLE_PERMISSIONS: dict[RoleName, set[Permission]] = {
         P.INTERVIEW_ASSIGN,
     },
     RoleName.CANDIDATE: set(),  # candidate rights are modelled separately, not via staff perms
+    # Employee self-service: induction only. This is the ONLY bundle that holds
+    # induction.view; it holds no other permission so an employee cannot reach any
+    # recruitment, candidate, or admin surface.
+    RoleName.EMPLOYEE: {
+        P.INDUCTION_VIEW,
+    },
 }

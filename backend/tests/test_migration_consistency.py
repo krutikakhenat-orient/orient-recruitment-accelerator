@@ -69,6 +69,9 @@ def test_model_tables_present() -> None:
         "privacy_request",
         "retention_policy",
         "retention_action",
+        # Employee induction
+        "induction_video",
+        "induction_completion",
     }
     assert expected == _model_table_names()
 

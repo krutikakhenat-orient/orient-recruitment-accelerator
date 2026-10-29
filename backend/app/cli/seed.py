@@ -21,6 +21,7 @@ from app.modules.audit.schemas import AuditEventWrite
 from app.modules.audit.service import record_event
 from app.modules.identity.models import Role, User, UserRole
 from app.modules.identity.permissions import DEFAULT_ROLE_PERMISSIONS, RoleName
+from app.modules.induction.service import seed_developer_video
 from app.modules.organisations.repository import get_or_create_organisation
 
 # Synthetic local-dev password. Clearly non-production; replace in any real environment.
@@ -81,6 +82,10 @@ def seed(db: Session) -> None:
                 reason="synthetic seed data",
             ),
         )
+
+    # Developer-provisioned induction video so local dev has a playable video. Idempotent:
+    # repeated seeds reuse the existing video row + object-store blob (no duplicates).
+    seed_developer_video(db, org.id)
 
     db.commit()
 
