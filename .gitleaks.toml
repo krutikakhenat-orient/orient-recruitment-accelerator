@@ -4,14 +4,22 @@
 # caught, while exempting a tiny, explicit set of CLEARLY-SYNTHETIC test passwords that the
 # generic-api-key rule reports as false positives.
 #
-# What is exempted and why it is safe:
-#   - "CorrectHorseBatteryStaple1" and "AnotherStrongPassword12" are static, well-known
-#     example passwords used ONLY to construct in-memory test users in backend/tests/
-#     (verified: these literals appear in no application/production code). They are not tied
-#     to any real account, service, deployment, or environment and grant access to nothing.
-#     There is nothing to revoke or rotate.
+# What is exempted and why it is safe (EVERY item is a static, clearly-labelled,
+# non-production placeholder that is tied to no real account/service/deployment and grants
+# access to nothing — there is nothing to revoke or rotate):
+#   - Test-user passwords used only to build in-memory users in backend/tests/:
+#     "CorrectHorseBatteryStaple1", "CorrectHorseBatteryStaple9", "AnotherStrongPassword12".
+#   - The seed / local-dev demo password "SyntheticDevPassword123" (backend/app/cli/seed.py
+#     and docs) — a local evaluation account password, replaced in any real environment.
+#   - Placeholder JWT signing secrets that exist ONLY to let the app boot in test/CI/local
+#     dev (they are >=32 chars so Settings validation passes, and the app REFUSES to start
+#     with these in staging/production — see core/config.validate_production_safety):
+#       "ci-secret-value-at-least-32-characters-long"      (.github/workflows/ci.yml)
+#       "test-secret-value-at-least-32-chars-long!!"       (backend/tests/conftest.py)
+#       "unit-test-secret-value-at-least-32-chars!!"       (backend/tests/test_security.py)
+#       "local-dev-secret-change-me-32-characters!!"       (backend/run_local.py)
 #
-# Scope: the allowlist matches ONLY these two exact literal strings. It does NOT exempt a
+# Scope: the allowlist matches ONLY these exact literal strings. It does NOT exempt a
 # directory, a file type, or an entropy range, so ANY other secret — including a real one
 # accidentally committed to a test file — is still detected and fails the scan.
 #
@@ -25,8 +33,17 @@ title = "Orient Recruitment Accelerator — gitleaks config"
 useDefault = true
 
 [allowlist]
-description = "Synthetic, non-production example passwords used only in backend tests."
+description = "Synthetic, non-production example passwords and placeholder dev/test/CI JWT secrets."
 regexes = [
+  # Test-user passwords (backend/tests)
   '''CorrectHorseBatteryStaple1''',
+  '''CorrectHorseBatteryStaple9''',
   '''AnotherStrongPassword12''',
+  # Seed / local-dev demo account password
+  '''SyntheticDevPassword123''',
+  # Placeholder JWT signing secrets (test / CI / local dev only; rejected in production)
+  '''ci-secret-value-at-least-32-characters-long''',
+  '''test-secret-value-at-least-32-chars-long!!''',
+  '''unit-test-secret-value-at-least-32-chars!!''',
+  '''local-dev-secret-change-me-32-characters!!''',
 ]
