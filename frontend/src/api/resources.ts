@@ -66,6 +66,17 @@ export const transitionCampaign = (id: string, destination: string, reason: stri
     method: "POST",
     body: JSON.stringify({ destination, reason }),
   });
+const closureReadiness = z
+  .object({
+    pending_applications: z.number(),
+    pending_interviews: z.number(),
+    has_pending: z.boolean(),
+  })
+  .passthrough();
+export type ClosureReadiness = z.infer<typeof closureReadiness>;
+// Advisory pending-work counts to warn HR before completing/cancelling a campaign.
+export const getClosureReadiness = (id: string) =>
+  apiFetch(`/api/v1/campaigns/${id}/closure-readiness`, closureReadiness);
 // Assign a staff user to a campaign (email omitted = self-assign).
 export const assignToCampaign = (id: string, email?: string) =>
   apiFetch(`/api/v1/campaigns/${id}/assignments`, campaign, {
@@ -112,12 +123,43 @@ export const updateJdVersion = (versionId: string, body: Record<string, unknown>
     body: JSON.stringify(body),
   });
 
-// ---------- Staff users (for four-eyes approver pickers) ----------
+// ---------- Staff users (for four-eyes approver pickers + admin user management) ----------
+// role_names is included so pickers can filter by role (e.g. the interviewer dropdown lists
+// only Interview Panel members); is_active shows account status in the admin table. The
+// backend returns these as non-sensitive identity metadata (never passwords/candidate data).
 export const staffUser = z
-  .object({ id: uuid, email: z.string(), display_name: z.string() })
+  .object({
+    id: uuid,
+    email: z.string(),
+    display_name: z.string(),
+    is_active: z.boolean().optional(),
+    role_names: z.array(z.string()).optional(),
+  })
   .passthrough();
 export type StaffUser = z.infer<typeof staffUser>;
-export const listUsers = () => apiFetch("/api/v1/users", z.array(staffUser));
+// includeInactive=true is used by the admin user table (which shows status); pickers call it
+// without the flag so they only ever see active users.
+export const listUsers = (includeInactive = false) =>
+  apiFetch(
+    includeInactive ? "/api/v1/users?include_inactive=true" : "/api/v1/users",
+    z.array(staffUser),
+  );
+
+// Soft-delete (deactivate) a staff user. Requires user.manage server-side. Returns on 204.
+export async function deleteUser(userId: string, token: string): Promise<void> {
+  const resp = await fetch(`/api/v1/users/${userId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok && resp.status !== 204) {
+    const body: unknown = await resp.json().catch(() => null);
+    const msg =
+      body && typeof body === "object" && "error" in body
+        ? (body as { error: { message: string } }).error.message
+        : `Could not delete the user (${resp.status})`;
+    throw new Error(msg);
+  }
+}
 
 // Upload is multipart; handled directly (not JSON).
 export async function uploadJd(campaignId: string, file: File, token: string): Promise<JDVersion> {
@@ -568,11 +610,19 @@ export const resumeDownloadPath = (applicationId: string): string =>
 
 // Fetch the resume as a Blob using the bearer token, so the Resume tab can preview/download
 // it. Returns null when there is no resume on file (404) so the UI can show a clear message.
+//
+// By default this requests the ORIGINAL uploaded file only; a missing original yields 404
+// (so extracted text is never mistaken for the original — used by the HR download action).
+// Pass { allowTextFallback: true } to additionally accept the clearly-labelled extracted
+// text when the original blob is unavailable (used by the Interview Panel preview tab).
 export async function downloadResume(
   applicationId: string,
   token: string,
-): Promise<{ blob: Blob; contentType: string } | null> {
-  const resp = await fetch(resumeDownloadPath(applicationId), {
+  opts: { allowTextFallback?: boolean } = {},
+): Promise<{ blob: Blob; contentType: string; isOriginal: boolean } | null> {
+  const url =
+    resumeDownloadPath(applicationId) + (opts.allowTextFallback ? "?fallback=text" : "");
+  const resp = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (resp.status === 404) return null;
@@ -585,6 +635,97 @@ export async function downloadResume(
     throw new Error(msg);
   }
   const blob = await resp.blob();
+  // X-Resume-Source distinguishes the original upload from the extracted-text fallback.
+  const isOriginal = resp.headers.get("X-Resume-Source") !== "extracted-text-fallback";
+  return {
+    blob,
+    contentType: resp.headers.get("Content-Type") ?? "application/octet-stream",
+    isOriginal,
+  };
+}
+
+// ---------- Campaign report (in-app preview = Excel download, one shared backend model) ----
+export const reportColumn = z.object({ key: z.string(), label: z.string(), width: z.number() });
+export const candidateReportRow = z
+  .object({
+    application_id: uuid,
+    candidate_name: z.string(),
+    email: z.string().nullable(),
+    phone: z.string().nullable(),
+    contact_masked: z.boolean(),
+    applied_position: z.string(),
+    status: z.string(),
+    status_label: z.string(),
+    scored: z.boolean(),
+    overall_score: z.number().nullable(),
+    jd_skills_match: z.number().nullable(),
+    recommendation: z.string().nullable(),
+    manual_review_required: z.boolean(),
+    conflict_flagged: z.boolean(),
+    relevant_skills: z.array(z.string()),
+    key_strengths: z.array(z.string()),
+    missing_requirements: z.array(z.string()),
+    unverified_requirements: z.array(z.string()),
+    experience_summary: z.string().nullable(),
+    education_summary: z.string().nullable(),
+    resume_available: z.boolean(),
+    resume_filename: z.string().nullable(),
+    rank: z.number().nullable(),
+  })
+  .passthrough();
+export const campaignReport = z
+  .object({
+    summary: z
+      .object({
+        campaign_id: uuid,
+        campaign_name: z.string(),
+        position_title: z.string(),
+        jd_role: z.string().nullable(),
+        status: z.string(),
+        status_label: z.string(),
+        number_of_openings: z.number(),
+        total_candidates: z.number(),
+        scored_candidates: z.number(),
+        unscored_candidates: z.number(),
+        contact_unmasked: z.boolean(),
+        generated_at: z.string(),
+        score_note: z.string(),
+      })
+      .passthrough(),
+    columns: z.array(reportColumn),
+    rows: z.array(candidateReportRow),
+  })
+  .passthrough();
+export type CampaignReport = z.infer<typeof campaignReport>;
+export type CandidateReportRow = z.infer<typeof candidateReportRow>;
+// The in-app report preview — the SAME data the Excel download renders (one backend model).
+export const getCampaignReport = (campaignId: string) =>
+  apiFetch(`/api/v1/reports/campaigns/${campaignId}/report`, campaignReport);
+
+// Secure campaign Excel export (authenticated, authorised server-side). Served as an
+// attachment; never a public bucket URL. Fetched with the bearer token like downloadResume.
+export const campaignExportPath = (campaignId: string): string =>
+  `/api/v1/reports/campaigns/${campaignId}/export`;
+
+// Fetch the campaign export as a Blob using the bearer token so the UI can trigger a
+// browser download. Returns null on 404 (campaign not found / not accessible).
+export async function downloadCampaignExport(
+  campaignId: string,
+  token: string,
+): Promise<{ blob: Blob; contentType: string } | null> {
+  const resp = await fetch(campaignExportPath(campaignId), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (resp.status === 404) return null;
+  if (!resp.ok) {
+    const body: unknown = await resp.json().catch(() => null);
+    const msg =
+      body && typeof body === "object" && "error" in body
+        ? (body as { error: { message: string } }).error.message
+        : `Could not export the campaign (${resp.status})`;
+    throw new Error(msg);
+  }
+  const blob = await resp.blob();
   return { blob, contentType: resp.headers.get("Content-Type") ?? "application/octet-stream" };
 }
 
@@ -593,6 +734,7 @@ export const panelInterview = z
   .object({
     application_id: uuid,
     campaign_id: uuid,
+    campaign_name: z.string().optional(),
     invitation_id: uuid.nullable(),
     candidate_name: z.string(),
     state: z.string(),
@@ -612,8 +754,101 @@ export const panelDashboard = z
   })
   .passthrough();
 export type PanelDashboard = z.infer<typeof panelDashboard>;
-export const getPanelDashboard = () =>
-  apiFetch("/api/v1/assessments/panel", panelDashboard);
+export const getPanelDashboard = (campaignId?: string) =>
+  apiFetch(
+    campaignId
+      ? `/api/v1/assessments/panel?campaign_id=${campaignId}`
+      : "/api/v1/assessments/panel",
+    panelDashboard,
+  );
+
+// ---------- Interviewer assignments (panel isolation) ----------
+// Assignment METADATA only — these endpoints never return candidate profiles, resumes,
+// scores, or scorecards. Managing assignments requires interview.assign server-side.
+export const interviewAssignment = z
+  .object({
+    id: uuid,
+    organisation_id: uuid,
+    campaign_id: uuid,
+    stage_id: uuid.nullable(),
+    interviewer_id: uuid,
+    interviewer_name: z.string().nullable().optional(),
+    assigned_by: uuid,
+    is_active: z.boolean(),
+    created_at: z.string(),
+    updated_at: z.string(),
+  })
+  .passthrough();
+export type InterviewAssignment = z.infer<typeof interviewAssignment>;
+
+export const listInterviewAssignments = (campaignId: string) =>
+  apiFetch(
+    `/api/v1/interviews/campaigns/${campaignId}/assignments`,
+    z.array(interviewAssignment),
+  );
+
+export const createInterviewAssignment = (
+  campaignId: string,
+  body: { interviewer_id: string; stage_id?: string | null },
+) =>
+  apiFetch(
+    `/api/v1/interviews/campaigns/${campaignId}/assignments`,
+    interviewAssignment,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+// Soft-remove an assignment. Returns nothing (204); handled directly so a 204 with no body
+// does not fail JSON parsing.
+export async function removeInterviewAssignment(
+  assignmentId: string,
+  token: string,
+): Promise<void> {
+  const resp = await fetch(`/api/v1/interviews/assignments/${assignmentId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok && resp.status !== 204) {
+    const body: unknown = await resp.json().catch(() => null);
+    const msg =
+      body && typeof body === "object" && "error" in body
+        ? (body as { error: { message: string } }).error.message
+        : `Could not remove the assignment (${resp.status})`;
+    throw new Error(msg);
+  }
+}
+
+// The authenticated interviewer's own assignment buckets (campaign id + display label).
+export const myAssignment = z
+  .object({
+    campaign_id: uuid,
+    campaign_name: z.string(),
+    stage_id: uuid.nullable().optional(),
+    stage_name: z.string().nullable().optional(),
+  })
+  .passthrough();
+export type MyAssignment = z.infer<typeof myAssignment>;
+export const listMyAssignments = () =>
+  apiFetch("/api/v1/interviews/my-assignments", z.array(myAssignment));
+
+// Organisation-wide interviewer-assignment overview for the System Admin page. METADATA
+// ONLY — no candidate profiles, resumes, contact details, scores, rankings, or assessments.
+export const assignmentOverview = z
+  .object({
+    id: uuid,
+    interviewer_id: uuid,
+    interviewer_name: z.string().nullable().optional(),
+    interviewer_email: z.string().nullable().optional(),
+    interviewer_role_names: z.array(z.string()).optional(),
+    campaign_id: uuid,
+    campaign_name: z.string().nullable().optional(),
+    stage_id: uuid.nullable().optional(),
+    stage_name: z.string().nullable().optional(),
+    is_active: z.boolean(),
+  })
+  .passthrough();
+export type AssignmentOverview = z.infer<typeof assignmentOverview>;
+export const listAllInterviewAssignments = () =>
+  apiFetch("/api/v1/interviews/assignments", z.array(assignmentOverview));
 
 // ---------- Hiring decisions (panel → decision-maker handoff) ----------
 export const assessmentSummary = z.object({

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_actor, requires, settings_dep
@@ -64,6 +65,19 @@ def me(actor: AuthenticatedActor = Depends(get_current_actor)) -> AuthenticatedA
     return actor
 
 
+def _user_read(user: object) -> UserRead:
+    """Map a User ORM row to UserRead, including its role names (e.g. 'interview_panel').
+
+    role_names is non-sensitive metadata used by UI pickers (it is never a password or
+    candidate data). Roles are read from the user's UserRole rows."""
+    from app.modules.identity.models import User
+
+    assert isinstance(user, User)
+    data = UserRead.model_validate(user)
+    role_names = sorted({ur.role.name for ur in user.roles if ur.role is not None})
+    return data.model_copy(update={"role_names": role_names})
+
+
 @router.post("/users", response_model=UserRead, status_code=201)
 def create_user(
     payload: UserCreate,
@@ -76,24 +90,47 @@ def create_user(
         data=payload,
         actor_id=actor.user_id,
     )
-    return UserRead.model_validate(user)
+    return _user_read(user)
 
 
 @router.get("/users", response_model=list[UserRead])
 def list_users(
+    include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
     actor: AuthenticatedActor = Depends(get_current_actor),
 ) -> list[UserRead]:
-    """List active staff users in the organisation.
+    """List staff users in the organisation.
 
     Available to any authenticated staff member so the UI can offer a distinct approver for
-    four-eyes actions (threshold changes, rule-set approval). Returns only non-sensitive
-    identity fields (no password hashes, no candidate data).
+    four-eyes actions and the interviewer picker. By default only ACTIVE users are returned
+    (so pickers never offer a deactivated user). ``include_inactive=true`` (used by the admin
+    user-management table, which also shows status) returns everyone. Returns only
+    non-sensitive identity fields (no password hashes, no candidate data).
     """
     from app.modules.identity import repository as identity_repo
 
-    users = identity_repo.list_users(db, actor.organisation_id)
-    return [UserRead.model_validate(u) for u in users]
+    users = identity_repo.list_users(
+        db, actor.organisation_id, include_inactive=include_inactive
+    )
+    return [_user_read(u) for u in users]
 
 
-_ = uuid  # keep uuid import for type references in schemas
+@router.delete("/users/{user_id}", status_code=204)
+def delete_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(requires(Permission.USER_MANAGE)),
+) -> Response:
+    """Soft-delete (deactivate) a staff user. Requires user.manage.
+
+    Non-destructive: the account is marked inactive and can no longer sign in or be selected
+    as an interviewer, but the row and all existing relationships/history are preserved. An
+    admin cannot delete their own account.
+    """
+    service.deactivate_user(
+        db,
+        organisation_id=actor.organisation_id,
+        user_id=user_id,
+        actor_id=actor.user_id,
+    )
+    return Response(status_code=204)

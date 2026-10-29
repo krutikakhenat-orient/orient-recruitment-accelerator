@@ -17,6 +17,7 @@ from app.modules.campaigns.schemas import (
     CampaignCreate,
     CampaignRead,
     CampaignTransitionRequest,
+    ClosureReadinessRead,
 )
 from app.modules.campaigns.states import CampaignState
 from app.modules.campaigns.transition_service import transition
@@ -125,6 +126,31 @@ def transition_campaign(
         db, actor=actor, campaign=campaign, destination=destination, reason=payload.reason
     )
     return CampaignRead.model_validate(updated)
+
+
+@router.get("/{campaign_id}/closure-readiness", response_model=ClosureReadinessRead)
+def campaign_closure_readiness(
+    campaign_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> ClosureReadinessRead:
+    """Advisory pending-work counts to warn HR before completing/cancelling a campaign.
+
+    Read-only; never mutates state and never blocks a transition. Requires the actor to be
+    assigned to the campaign (object-level authorisation) and hold ``candidate.view`` — the
+    same grant the campaign reports/export use, since the counts summarise this campaign's
+    candidates and interviews.
+    """
+    service.get_campaign(db, actor.organisation_id, campaign_id)  # 404 if missing/other org
+    require_campaign_permission(actor, Permission.CANDIDATE_VIEW, campaign_id)
+    readiness = service.closure_readiness(
+        db, organisation_id=actor.organisation_id, campaign_id=campaign_id
+    )
+    return ClosureReadinessRead(
+        pending_applications=readiness.pending_applications,
+        pending_interviews=readiness.pending_interviews,
+        has_pending=readiness.has_pending,
+    )
 
 
 @router.post("/{campaign_id}/fast-track-open", response_model=CampaignRead)

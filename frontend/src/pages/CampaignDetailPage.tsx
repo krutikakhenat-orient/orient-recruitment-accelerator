@@ -11,16 +11,24 @@ import {
   createSlot,
   createStage,
   createFormDraft,
+  createInterviewAssignment,
   devOpenCampaignNow,
+  downloadCampaignExport,
+  downloadResume,
   getCampaign,
+  getClosureReadiness,
   listApplications,
+  listInterviewAssignments,
   listInvitations,
   listJdVersions,
   listScreeningRuns,
   listSlots,
   listStages,
+  listUsers,
+  removeInterviewAssignment,
   recordWalkInInterview,
   rejectJd,
+  rescoreCampaign,
   runScreening,
   transitionCampaign,
   updateJdVersion,
@@ -69,6 +77,21 @@ const TAB_META: Record<Tab, { permission: string | null; role: string; blurb: st
   applications: { permission: "screening.execute", role: "Recruiter", blurb: "View applications and run deterministic screening." },
   interviews: { permission: "interview.approve", role: "Recruiter Admin", blurb: "Select candidates for interview, manage stages and slots. Attendance is recorded by the interview panel." },
 };
+
+/* Trigger a browser "save file" for an already-fetched Blob, then release the object URL.
+   Shared by the campaign Excel export and the per-candidate resume download so both use one
+   safe pattern (an authenticated fetch -> Blob -> temporary anchor), never a direct link to
+   storage. */
+function triggerBrowserDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 
 const PREREQS: { key: string; label: string }[] = [
   { key: "approved_jd_version_id", label: "Approved JD" },
@@ -128,22 +151,60 @@ const NEXT: Record<string, { to: string; label: string }[]> = {
     { to: "approved", label: "Approve campaign" },
     { to: "cancelled", label: "Cancel" },
   ],
-  approved: [{ to: "published", label: "Publish" }],
-  published: [{ to: "applications_open", label: "Open applications" }],
+  approved: [
+    { to: "published", label: "Publish" },
+    { to: "cancelled", label: "Cancel" },
+  ],
+  published: [
+    { to: "applications_open", label: "Open applications" },
+    { to: "cancelled", label: "Cancel" },
+  ],
   applications_open: [
     { to: "applications_closed", label: "Close applications" },
     { to: "paused", label: "Pause" },
+    { to: "cancelled", label: "Cancel" },
   ],
-  paused: [{ to: "applications_open", label: "Resume" }],
-  applications_closed: [{ to: "screening", label: "Begin screening" }],
-  screening: [{ to: "human_review", label: "Start human review" }],
-  human_review: [{ to: "interview_planning", label: "Plan interviews" }],
-  interview_planning: [{ to: "interviewing", label: "Start interviewing" }],
-  interviewing: [{ to: "selection_review", label: "Selection review" }],
-  selection_review: [{ to: "completed", label: "Complete campaign" }],
+  paused: [
+    { to: "applications_open", label: "Resume" },
+    { to: "cancelled", label: "Cancel" },
+  ],
+  applications_closed: [
+    { to: "screening", label: "Begin screening" },
+    { to: "cancelled", label: "Cancel" },
+  ],
+  screening: [
+    { to: "human_review", label: "Start human review" },
+    { to: "cancelled", label: "Cancel" },
+  ],
+  human_review: [
+    { to: "interview_planning", label: "Plan interviews" },
+    { to: "cancelled", label: "Cancel" },
+  ],
+  interview_planning: [
+    { to: "interviewing", label: "Start interviewing" },
+    { to: "cancelled", label: "Cancel" },
+  ],
+  interviewing: [
+    { to: "selection_review", label: "Selection review" },
+    { to: "cancelled", label: "Cancel" },
+  ],
+  selection_review: [
+    { to: "completed", label: "Complete campaign" },
+    { to: "cancelled", label: "Cancel" },
+  ],
   completed: [{ to: "closed", label: "Close" }],
-  closed: [{ to: "archived", label: "Archive" }],
+  // A closed campaign can be reopened by an authorised user (needs campaign.publish);
+  // reopening lands back on applications_open. It can also be archived (terminal).
+  closed: [
+    { to: "applications_open", label: "Reopen" },
+    { to: "archived", label: "Archive" },
+  ],
 };
+
+// Destination states whose transition abandons/ends the campaign. When the user clicks one
+// of these from a state where work may still be in flight, we first warn with the pending
+// candidate/interview counts (advisory — the backend still owns the decision).
+const CLOSURE_DESTINATIONS = new Set(["completed", "cancelled"]);
 
 /* Explains why an action is unavailable: either you lack the role permission, or you are
    not assigned to this campaign. Returns null when the user can act. */
@@ -496,6 +557,204 @@ function JdReadout({ draft }: { draft: JDVersion }): ReactNode {
   );
 }
 
+/* Interviewer assignment management. Visible to holders of interview.assign (System Admin,
+   who manages org-wide, and Recruiter Admin for campaigns they're assigned to). Shows ONLY
+   assignment metadata — never candidate profiles, resumes, scores, or scorecards — so it is
+   safe for System Admin, who has no candidate-content permission. Assign an interviewer to
+   the whole campaign or a specific stage; remove with confirmation. The server enforces the
+   permission, campaign scope, and interviewer eligibility; this UI never bypasses that. */
+function InterviewerAssignmentsCard({
+  campaignId,
+  stages,
+}: {
+  campaignId: string;
+  stages: { id: string; name: string }[];
+}): ReactNode {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const { token, hasPermission } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+  const [interviewerId, setInterviewerId] = useState("");
+  const [stageId, setStageId] = useState("");
+
+  // interview.assign is the only gate; object-level scope is enforced by the server.
+  const canManage = hasPermission("interview.assign");
+
+  const assignments = useQuery({
+    queryKey: ["interview-assignments", campaignId],
+    queryFn: () => listInterviewAssignments(campaignId),
+    enabled: canManage,
+  });
+  // The interviewer picker lists staff accounts; the server rejects anyone who cannot
+  // submit assessments, with a clear message.
+  const users = useQuery({
+    queryKey: ["staff-users"],
+    queryFn: () => listUsers(),
+    enabled: canManage,
+  });
+
+  const create = useMutation({
+    mutationFn: () =>
+      createInterviewAssignment(campaignId, {
+        interviewer_id: interviewerId,
+        stage_id: stageId || null,
+      }),
+    onSuccess: () => {
+      setInterviewerId("");
+      setStageId("");
+      setError(null);
+      void qc.invalidateQueries({ queryKey: ["interview-assignments", campaignId] });
+      toast.push("Interviewer assigned.", { tone: "ok" });
+    },
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : "Could not assign the interviewer."),
+  });
+
+  const [removing, setRemoving] = useState<string | null>(null);
+  async function handleRemove(assignmentId: string): Promise<void> {
+    const authToken = token();
+    if (!authToken) return;
+    if (!window.confirm("Remove this interviewer assignment? Their submitted assessments are kept.")) {
+      return;
+    }
+    setRemoving(assignmentId);
+    setError(null);
+    try {
+      await removeInterviewAssignment(assignmentId, authToken);
+      void qc.invalidateQueries({ queryKey: ["interview-assignments", campaignId] });
+      toast.push("Assignment removed.", { tone: "ok" });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not remove the assignment.");
+    } finally {
+      setRemoving(null);
+    }
+  }
+
+  if (!canManage) return null;
+
+  const rows = assignments.data ?? [];
+  const userById = (id: string) => users.data?.find((u) => u.id === id);
+  const nameFor = (id: string): string => userById(id)?.display_name ?? id.slice(0, 8);
+  const emailFor = (id: string): string => userById(id)?.email ?? "—";
+  // Only Interview Panel members are eligible interviewers — these are the users a System
+  // Admin added to the "interview panel" role. The backend also rejects anyone without the
+  // assessment permission, so this is a convenience filter, not the security boundary.
+  const panelUsers = (users.data ?? []).filter((u) =>
+    (u.role_names ?? []).includes("interview_panel"),
+  );
+
+  return (
+    <Card title="Interviewer assignments">
+      <p className="subtle" style={{ marginTop: 0 }}>
+        Assign interview-panel members to this job. An interviewer sees only the candidates
+        for jobs (and, if set, the stage) they are assigned to. This panel shows assignment
+        details only — no candidate information.
+      </p>
+      {error && <ErrorNote>{error}</ErrorNote>}
+
+      <div className="grid grid--2" style={{ alignItems: "end", marginBottom: 12 }}>
+        <Field label="Interviewer" htmlFor="assign-interviewer">
+          <select
+            id="assign-interviewer"
+            value={interviewerId}
+            onChange={(e) => setInterviewerId(e.target.value)}
+          >
+            <option value="">Choose a panel member…</option>
+            {panelUsers.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.display_name} ({u.email})
+              </option>
+            ))}
+          </select>
+          {/* Distinguish the three "empty dropdown" causes so a data problem is never
+              silently shown as "no panel members exist" (which previously masked a stale
+              backend that omitted role_names from GET /users). */}
+          {users.isLoading && <span className="subtle">Loading interviewers…</span>}
+          {users.isError && (
+            <span className="subtle">
+              Could not load staff users. Reload the page; if it persists the API may be
+              unavailable.
+            </span>
+          )}
+          {users.data && panelUsers.length === 0 && (
+            <span className="subtle">
+              No active Interview Panel members found. A System Admin creates them in
+              Administration (assign the “interview panel” role).
+            </span>
+          )}
+        </Field>
+        <Field label="Stage (optional — whole job if blank)" htmlFor="assign-stage">
+          <select id="assign-stage" value={stageId} onChange={(e) => setStageId(e.target.value)}>
+            <option value="">Whole campaign</option>
+            {stages.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <Button
+        variant="primary"
+        small
+        disabled={!interviewerId || create.isPending}
+        onClick={() => create.mutate()}
+      >
+        {create.isPending ? "Assigning…" : "Assign interviewer"}
+      </Button>
+
+      <div style={{ marginTop: 16 }}>
+        {assignments.isLoading && <Loading label="Loading assignments…" />}
+        {assignments.error && <ErrorNote>Could not load assignments.</ErrorNote>}
+        {assignments.data && rows.length === 0 && (
+          <Empty>No interviewers are assigned to this job yet.</Empty>
+        )}
+        {rows.length > 0 && (
+          <div className="table-wrap">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Interviewer</th>
+                  <th>Email</th>
+                  <th>Stage</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((a) => (
+                  <tr key={a.id}>
+                    <td>{a.interviewer_name ?? nameFor(a.interviewer_id)}</td>
+                    <td className="subtle">{emailFor(a.interviewer_id)}</td>
+                    <td>
+                      {a.stage_id
+                        ? (stages.find((s) => s.id === a.stage_id)?.name ?? "Stage")
+                        : "Whole campaign"}
+                    </td>
+                    <td>
+                      <Badge tone={a.is_active ? "ok" : "neutral"}>
+                        {a.is_active ? "Active" : "Inactive"}
+                      </Badge>
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <Button
+                        variant="default"
+                        small
+                        disabled={removing === a.id}
+                        onClick={() => void handleRemove(a.id)}
+                      >
+                        {removing === a.id ? "Removing…" : "Remove"}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
@@ -582,6 +841,7 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
 
   return (
     <>
+      <InterviewerAssignmentsCard campaignId={campaignId} stages={stages.data ?? []} />
       <AccessNote campaignId={campaignId} permission="interview.approve" role="Recruiter Admin / Hiring Manager" />
       {error && <ErrorNote>{error}</ErrorNote>}
 
@@ -840,7 +1100,7 @@ function interviewStatus(state: string): { label: string; tone: "ok" | "warn" | 
 function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
-  const { hasPermission, canAccessCampaign } = useAuth();
+  const { token, hasPermission, canAccessCampaign } = useAuth();
   const [error, setError] = useState<string | null>(null);
   // The application whose scorecard drawer is open, with its latest screening run.
   const [inspect, setInspect] = useState<{ app: Application; run: ScreeningRun | null } | null>(null);
@@ -851,14 +1111,115 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
 
   const assigned = canAccessCampaign(campaignId);
   const canScreen = hasPermission("screening.execute") && assigned;
+  // Rescore regenerates the scoring criteria from the campaign's CURRENT approved JD and
+  // re-screens every candidate. It needs rule.approve (the caller approves the regenerated
+  // criteria) + campaign assignment. This is the ONLY action that picks up a newly-approved
+  // JD's skills — the per-candidate "Screen" button re-runs against the EXISTING rules.
+  const canRescore = hasPermission("rule.approve") && assigned;
+  // Export downloads a read-only .xlsx of every candidate using the already-saved
+  // scores/ranks (no rescoring). Mirrors the server check: candidate.view + assignment.
+  const canExport = hasPermission("candidate.view") && assigned;
+  const [exporting, setExporting] = useState(false);
   // The application whose submitted form-answers modal is open.
   const [formView, setFormView] = useState<Application | null>(null);
+
+  async function handleExport(): Promise<void> {
+    const authToken = token();
+    if (!authToken) return;
+    setError(null);
+    setExporting(true);
+    try {
+      const result = await downloadCampaignExport(campaignId, authToken);
+      if (result === null) {
+        setError("This campaign could not be exported (not found or not accessible).");
+        return;
+      }
+      triggerBrowserDownload(result.blob, `campaign-${campaignId}-export.xlsx`);
+      toast.push("Campaign export downloaded.", { tone: "ok" });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not export the campaign.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const rescore = useMutation({
+    mutationFn: () => rescoreCampaign(campaignId),
+    onSuccess: (summary) => {
+      void qc.invalidateQueries({ queryKey: ["applications", campaignId] });
+      void qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
+      toast.push(
+        `Rescored ${summary.rescored} candidate(s) against ${summary.criteria_count} criteria` +
+          (summary.progressed ? ` · ${summary.progressed} progressed to interview` : ""),
+        { tone: "ok" },
+      );
+    },
+    onError: (e) =>
+      setError(
+        e instanceof ApiError
+          ? e.message
+          : "Could not rescore. Ensure the campaign has an approved JD with skills.",
+      ),
+  });
 
   return (
     <>
       <WalkInUploader campaignId={campaignId} canUpload={canScreen} />
 
-      <Card title="Applications">
+      <Card
+        title="Applications"
+        actions={
+          canRescore || canExport ? (
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              {canExport && (
+                <Link
+                  className="btn btn--accent btn--sm"
+                  to={`/campaigns/${campaignId}/report`}
+                  title="Open the candidate report inside the app — read, search and scroll the same data as the Excel download, then download the .xlsx from there."
+                >
+                  👁 Preview Excel
+                </Link>
+              )}
+              {canExport && (
+                <Button
+                  variant="default"
+                  small
+                  disabled={exporting}
+                  title="Download an Excel workbook of every candidate in this campaign using the saved scores and ranks. Nothing is rescored or changed."
+                  onClick={() => {
+                    void handleExport();
+                  }}
+                >
+                  {exporting ? "Exporting…" : "⤓ Export to Excel"}
+                </Button>
+              )}
+              {canRescore && (
+                <Button
+                  variant="default"
+                  small
+                  disabled={rescore.isPending}
+                  title="Regenerate scoring criteria from the current approved JD and re-screen every candidate. Existing runs are kept."
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Rescore this campaign?\n\nThis regenerates the scoring criteria from the " +
+                          "CURRENT approved Job Description and re-screens every candidate. Existing " +
+                          "screening runs are kept (nothing is deleted). Use this after approving a " +
+                          "new JD so the new skills are picked up.",
+                      )
+                    ) {
+                      setError(null);
+                      rescore.mutate();
+                    }
+                  }}
+                >
+                  {rescore.isPending ? "Rescoring…" : "↻ Rescore from current JD"}
+                </Button>
+              )}
+            </div>
+          ) : undefined
+        }
+      >
         <AccessNote campaignId={campaignId} permission="candidate.view" role="Recruiter / HR" />
         {error && <ErrorNote>{error}</ErrorNote>}
         <p className="subtle" style={{ marginTop: 0 }}>
@@ -893,6 +1254,7 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
                     key={a.id}
                     app={a}
                     canScreen={canScreen}
+                    canDownloadResume={canExport}
                     onScreened={() => {
                       void qc.invalidateQueries({ queryKey: ["applications", campaignId] });
                       toast.push("Screening run completed", { tone: "ok" });
@@ -1162,6 +1524,7 @@ function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUplo
 function ApplicationRow({
   app,
   canScreen,
+  canDownloadResume,
   onScreened,
   onInspect,
   onViewForm,
@@ -1169,15 +1532,19 @@ function ApplicationRow({
 }: {
   app: RankedApplication;
   canScreen: boolean;
+  canDownloadResume: boolean;
   onScreened: () => void;
   onInspect: (run: ScreeningRun | null) => void;
   onViewForm: () => void;
   onError: (msg: string) => void;
 }): ReactNode {
+  const { token } = useAuth();
+  const toast = useToast();
   // The list payload already carries the latest-run summary (rank/score/recommendation/
   // review flags) so the table ranks without a per-row fetch. The FULL run (with every
   // criterion) is loaded lazily only when the reviewer opens the scorecard.
   const [loadingCard, setLoadingCard] = useState(false);
+  const [downloadingResume, setDownloadingResume] = useState(false);
 
   const screen = useMutation({
     mutationFn: () => runScreening(app.id),
@@ -1185,6 +1552,36 @@ function ApplicationRow({
     onError: (e) =>
       onError(e instanceof ApiError ? e.message : "Screening failed — is a rule set approved?"),
   });
+
+  // Download this candidate's resume via the authenticated, authorised endpoint, keyed by
+  // the APPLICATION id (not the candidate id) so the correct submission's resume is fetched.
+  // The server enforces candidate.view + campaign assignment and only serves a CLEAN file;
+  // we reuse the shared browser-download pattern and show a friendly message on 404/error.
+  const handleDownloadResume = async (): Promise<void> => {
+    const authToken = token();
+    if (!authToken) return;
+    setDownloadingResume(true);
+    try {
+      const result = await downloadResume(app.id, authToken);
+      if (result === null) {
+        onError("No resume is on file for this candidate, or it is not available to download.");
+        return;
+      }
+      const suffix = result.contentType.includes("pdf")
+        ? "pdf"
+        : result.contentType.includes("word")
+          ? "docx"
+          : result.contentType.includes("text/plain")
+            ? "txt"
+            : "bin";
+      triggerBrowserDownload(result.blob, `resume-${app.id}.${suffix}`);
+      toast.push("Resume downloaded.", { tone: "ok" });
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not download the resume. Please try again.");
+    } finally {
+      setDownloadingResume(false);
+    }
+  };
 
   const openScorecard = async (): Promise<void> => {
     setLoadingCard(true);
@@ -1232,6 +1629,17 @@ function ApplicationRow({
       </td>
       <td style={{ textAlign: "right" }}>
         <div className="btn-row" style={{ justifyContent: "flex-end" }}>
+          {canDownloadResume && (
+            <Button
+              variant="default"
+              small
+              disabled={downloadingResume}
+              title="Download this candidate's uploaded resume. Served securely; requires the Recruiter/HR role and campaign assignment."
+              onClick={() => void handleDownloadResume()}
+            >
+              {downloadingResume ? "Downloading…" : "⤓ Resume"}
+            </Button>
+          )}
           <Button variant="default" small disabled={loadingCard} onClick={() => void openScorecard()}>
             {loadingCard ? "Opening…" : "Resume Score"}
           </Button>
@@ -1269,6 +1677,41 @@ function OverviewTab({ campaignId }: { campaignId: string }): ReactNode {
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Transition failed."),
   });
+
+  // Drive a lifecycle transition. For closing/cancelling destinations, first fetch the
+  // advisory pending-work counts and ask HR to confirm if candidates or interviews are
+  // still in flight (Req 3). The warning never blocks: the backend remains authoritative
+  // and the same transition runs either way. A readiness-fetch failure does not stop the
+  // action — it falls through to the normal transition (which the server still guards).
+  const requestTransition = async (destination: string): Promise<void> => {
+    setError(null);
+    if (CLOSURE_DESTINATIONS.has(destination)) {
+      const verb = destination === "completed" ? "complete" : "cancel";
+      try {
+        const r = await getClosureReadiness(campaignId);
+        if (r.has_pending) {
+          const parts: string[] = [];
+          if (r.pending_applications > 0)
+            parts.push(
+              `${r.pending_applications} candidate${r.pending_applications === 1 ? "" : "s"} still in progress`,
+            );
+          if (r.pending_interviews > 0)
+            parts.push(
+              `${r.pending_interviews} interview${r.pending_interviews === 1 ? "" : "s"} not yet concluded`,
+            );
+          const proceed = window.confirm(
+            `This campaign still has ${parts.join(" and ")}. ` +
+              `Records are preserved, but no further recruitment actions will be possible until it is reopened. ` +
+              `${verb === "complete" ? "Complete" : "Cancel"} this campaign anyway?`,
+          );
+          if (!proceed) return;
+        }
+      } catch {
+        // Advisory only — if the count can't be loaded, continue to the guarded transition.
+      }
+    }
+    transition.mutate(destination);
+  };
 
   const openNow = useMutation({
     mutationFn: () => devOpenCampaignNow(campaignId),
@@ -1505,8 +1948,7 @@ function OverviewTab({ campaignId }: { campaignId: string }): ReactNode {
                           : `Needs the ${perm} permission`
                     }
                     onClick={() => {
-                      setError(null);
-                      transition.mutate(n.to);
+                      void requestTransition(n.to);
                     }}
                   >
                     {n.label}

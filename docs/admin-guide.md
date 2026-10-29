@@ -4,7 +4,11 @@ Audience: System Administrators and Recruitment Administrators operating Orient
 Recruitment Accelerator.
 
 ## Initial setup
-1. Deploy the stack (see `docs/deployment.md`) and run `alembic upgrade head`.
+1. Deploy the stack (see `docs/deployment.md`) and run `alembic upgrade head`. Migration
+   `0009_interview_assignment` creates the `interview_assignment` table and grants the new
+   `interview.assign` permission to existing **Recruiter Admin** and **System Admin** roles
+   (additive; no data reset). On an existing database you must run this migration for those
+   roles to manage interviewer assignments.
 2. Seed foundation data for local/demo use: `python -m app.cli.seed` (synthetic only;
    refuses to run in a production environment).
 3. In production, create the first organisation and a System Administrator user through a
@@ -14,10 +18,16 @@ Recruitment Accelerator.
 - Roles are permission bundles (see `docs/permission-matrix.md`). Assign the least
   privilege needed.
 - Assign recruiters and recruiter admins to specific campaigns — a permission only takes
-  effect for a campaign the user is assigned to (object-level authorisation). Interview
-  panel members are invited to specific candidates rather than assigned to campaigns.
+  effect for a campaign the user is assigned to (object-level authorisation).
+- **Interviewer assignment**: interview-panel members now see candidates only for the jobs
+  (and, optionally, stages) they are **assigned** to. Manage assignments on a campaign's
+  **Interviews** tab (Recruiter Admin, for campaigns it manages) or, organisation-wide, as
+  System Administrator — both require the `interview.assign` permission. Assignment is
+  metadata only and grants **no** candidate-content access; removing an assignment revokes
+  worklist access on the next request and preserves any assessments already submitted.
 - System administrators do **not** automatically see candidate content; any such access
-  must be explicitly authorised and is logged.
+  must be explicitly authorised and is logged. Holding `interview.assign` lets a System
+  Administrator manage interviewer assignments without gaining candidate-content access.
 
 ## Governance controls
 - **Rules**: a rule set must be approved by someone other than its creator.

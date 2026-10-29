@@ -17,15 +17,40 @@ rejected. Source of truth: `backend/app/modules/campaigns/states.py` and
 | approved | published | campaign.publish | all of the above (AC-04) |
 | published | applications_open | campaign.publish | — |
 | applications_open | applications_closed / paused | campaign.pause | reason |
-| paused | applications_open | campaign.pause | reason |
+| paused | applications_open | campaign.pause | reason (resume) |
 | applications_closed | screening | screening.execute | — |
 | screening | human_review | application.review | review items generated |
 | human_review | interview_planning | interview.approve | invitation approval |
 | interview_planning | interviewing | interview.schedule | slots assigned |
 | interviewing | selection_review | assessment.submit | assessments present |
 | selection_review | completed | hiring_decision.approve | decision approved |
-| completed | closed → archived | campaign.edit | — |
-| draft/jd_uploaded/jd_review/criteria_*/approval_pending | cancelled | campaign.edit | reason |
+| completed | closed | campaign.edit | — |
+| closed | archived | campaign.edit | terminal (archived is final) |
+| closed | applications_open | campaign.publish | reason (**reopen** a closed campaign) |
+| any pre-completion state (draft … selection_review, incl. approved/published/applications_open/applications_closed/paused/screening/human_review/interview_planning/interviewing) | cancelled | campaign.edit | reason (hiring abandoned; all records preserved) |
+
+### Close, pause, complete, cancel, reopen
+
+- **Close applications** (`applications_open → applications_closed`, `campaign.pause`) stops new
+  candidate applications while screening, interviews and hiring decisions on existing
+  candidates continue. Only `published` and `applications_open` accept new applications
+  (`PUBLIC_OPEN_STATES` / `_OPEN_STATES`), so any later state already blocks new intake.
+- **Pause / resume** (`applications_open ↔ paused`, `campaign.pause`) temporarily stops new
+  applications and processing; no candidate, resume, score, interview or assignment record
+  is touched. `paused → applications_open` resumes.
+- **Complete** (`selection_review → completed`, `hiring_decision.approve`) marks recruitment
+  finished; **cancel** (above) marks it abandoned from any pre-completion state. Both
+  preserve all records. Before either, the UI calls
+  `GET /api/v1/campaigns/{id}/closure-readiness` and warns if candidates or interviews are
+  still pending (advisory only — it never blocks the transition).
+- **After closure** (`completed` / `closed` / `cancelled`): records are preserved and HR can
+  still view reports and export (`candidate.view` + assignment). New applications and new
+  recruitment actions are blocked unless an authorised user **reopens** the campaign
+  (`closed → applications_open`, `campaign.publish`). `archived` is terminal.
+
+All of the above run through the single campaign `TransitionService`: each requires the
+listed permission **and** campaign assignment, requires a non-empty reason, and emits an
+audit event (`campaign.transition.<name>`) with previous/next state and the reason.
 
 ## Application / candidate disposition
 

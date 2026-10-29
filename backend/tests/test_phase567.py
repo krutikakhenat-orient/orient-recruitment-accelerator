@@ -61,6 +61,9 @@ def test_interview_flow_through_to_decision(db_session) -> None:
     org = make_org(db_session)
     actor = _actor(org, uuid.uuid4(), RoleName.RECRUITER_ADMIN)
     app = _application(db_session, org, ApplicationState.SCREENED)
+    # This single actor also performs the panel attendance+assessment steps below, so it
+    # needs an active interviewer assignment to the campaign (interviewer isolation).
+    _assign_interviewer(db_session, org, actor.user_id)
 
     # Approve interview (AC-14): application -> interview_recommended.
     invitation = interview_service.approve_invitation(db_session, actor=actor, application=app)
@@ -102,13 +105,29 @@ def test_interview_flow_through_to_decision(db_session) -> None:
     assert app.state == ApplicationState.SELECTED.value
 
 
+# Stable panel-member id so an interviewer assignment matches the actor across tests.
+PANEL_ID = uuid.uuid4()
+
+
 def _panel_actor(org) -> AuthenticatedActor:  # type: ignore[no-untyped-def]
-    """A real Interview Panel member: ONLY assessment.submit, NOT assigned to the campaign."""
+    """A real Interview Panel member: ONLY assessment.submit. Interview access comes from an
+    InterviewAssignment (created in _scheduled_invitation), not from campaign assignment."""
     return AuthenticatedActor(
-        user_id=uuid.uuid4(), organisation_id=org.id, email="panel@example.com",
+        user_id=PANEL_ID, organisation_id=org.id, email="panel@example.com",
         role_names=[RoleName.INTERVIEW_PANEL.value],
         permissions={"assessment.submit"}, assigned_campaign_ids=set(),
     )
+
+
+def _assign_interviewer(db_session, org, interviewer_id) -> None:  # type: ignore[no-untyped-def]
+    """Active interviewer assignment to CAMPAIGN so interview-day actions are permitted."""
+    from app.modules.interviews.models import InterviewAssignment
+
+    db_session.add(InterviewAssignment(
+        organisation_id=org.id, campaign_id=CAMPAIGN, stage_id=None,
+        interviewer_id=interviewer_id, assigned_by=uuid.uuid4(), is_active=True,
+    ))
+    db_session.flush()
 
 
 def _scheduled_invitation(db_session, org, admin):  # type: ignore[no-untyped-def]
@@ -127,6 +146,7 @@ def _scheduled_invitation(db_session, org, admin):  # type: ignore[no-untyped-de
         db_session, actor=admin, invitation_id=inv.id, slot_id=slot.id
     )
     assert app.state == ApplicationState.INTERVIEW_SCHEDULED.value
+    _assign_interviewer(db_session, org, PANEL_ID)
     return app, inv
 
 
@@ -170,7 +190,7 @@ def test_panel_worklist_groups_by_stage(db_session) -> None:
     admin = _actor(org, uuid.uuid4(), RoleName.RECRUITER_ADMIN)
     app, inv = _scheduled_invitation(db_session, org, admin)
 
-    work = assessment_service.panel_worklist(db_session, org.id)
+    work = assessment_service.panel_worklist(db_session, org.id, PANEL_ID)
     mine = next(w for w in work if w["application_id"] == app.id)
     # A scheduled candidate is awaiting check-in in the new flow.
     assert mine["stage"] == "to_check_in"
@@ -181,7 +201,7 @@ def test_panel_worklist_groups_by_stage(db_session) -> None:
     interview_service.record_attendance(
         db_session, actor=_panel_actor(org), invitation_id=inv.id, attended=True
     )
-    work = assessment_service.panel_worklist(db_session, org.id)
+    work = assessment_service.panel_worklist(db_session, org.id, PANEL_ID)
     mine = next(w for w in work if w["application_id"] == app.id)
     assert mine["stage"] == "to_assess"
 
@@ -215,6 +235,7 @@ def test_assessment_requires_checked_in(db_session) -> None:
     org = make_org(db_session)
     actor = _actor(org, uuid.uuid4(), RoleName.RECRUITER_ADMIN)
     app = _application(db_session, org, ApplicationState.SCREENED)
+    _assign_interviewer(db_session, org, actor.user_id)  # assigned; the STATE guard rejects
     with pytest.raises(ConflictError, match="checked in"):
         assessment_service.submit_assessment(
             db_session, actor=actor, application=app, criteria_scores={},
@@ -226,6 +247,7 @@ def test_assessment_conflict_requires_detail(db_session) -> None:
     org = make_org(db_session)
     actor = _actor(org, uuid.uuid4(), RoleName.RECRUITER_ADMIN)
     app = _application(db_session, org, ApplicationState.ATTENDED)
+    _assign_interviewer(db_session, org, actor.user_id)  # assigned, so validation is reached
     with pytest.raises(ValidationError, match="conflict detail"):
         assessment_service.submit_assessment(
             db_session, actor=actor, application=app, criteria_scores={},

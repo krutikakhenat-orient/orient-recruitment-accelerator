@@ -19,6 +19,9 @@ dependencies = [
     # PDF text extraction (resume/JD parsing). Lazily imported as `fitz`; without it every
     # PDF extracts to empty text and candidates score 0 on skills.
     "pymupdf==1.25.1",
+    # Excel (.xlsx) generation for the campaign export (reporting module). Read-only use:
+    # it only writes workbooks from already-saved data and never touches scoring/DB state.
+    "openpyxl==3.1.5",
 ]
 
 [project.optional-dependencies]

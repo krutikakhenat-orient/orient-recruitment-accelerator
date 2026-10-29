@@ -13,7 +13,15 @@ import datetime as dt
 import uuid
 from enum import Enum
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -119,3 +127,57 @@ class InterviewInvitation(UUIDPrimaryKey, Timestamped, Actioned, Base):
         DateTime(timezone=True), nullable=True
     )
     auto_invite: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class InterviewAssignment(UUIDPrimaryKey, Timestamped, Actioned, Base):
+    """Which interviewer (panel member) is assigned to interview which campaign/job, and
+    optionally which stage within it.
+
+    This is the object-level authorisation link for the interview panel — the interview
+    analogue of ``CampaignAssignment`` (which governs recruiter/HR campaign access). Before
+    this existed, any holder of ``assessment.submit`` saw the whole organisation's active
+    interviews; with it, a panel member sees ONLY the campaigns (and, when scoped, stages)
+    they are actively assigned to.
+
+    Scoping model: ``campaign_id`` is required; ``stage_id`` is nullable and NULL means "the
+    whole campaign" (the common default). A non-null ``stage_id`` narrows the assignment to
+    that interview round.
+
+    Soft removal: ``is_active`` is set False to revoke access while PRESERVING assignment
+    history (and, crucially, any assessments the interviewer already submitted — those live
+    in a separate table and are never touched). A unique constraint on
+    ``(campaign_id, stage_id, interviewer_id)`` gives each logical assignment a single row,
+    so a repeated assign request REACTIVATES the existing row rather than inserting a
+    duplicate (idempotent).
+
+    Loose coupling: ``campaign_id`` / ``stage_id`` are plain UUIDs without a hard
+    cross-module FK, matching ``CampaignAssignment`` / ``InterviewInvitation`` conventions;
+    ``interviewer_id`` / ``assigned_by`` reference ``app_user`` (interviewers are ordinary
+    users holding the INTERVIEW_PANEL role).
+    """
+
+    __tablename__ = "interview_assignment"
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id",
+            "stage_id",
+            "interviewer_id",
+            name="uq_interview_assignment_scope",
+        ),
+    )
+
+    organisation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organisation.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    campaign_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), nullable=False, index=True
+    )
+    # NULL => the whole campaign; otherwise a specific interview stage of that campaign.
+    stage_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True
+    )
+    interviewer_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    assigned_by: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

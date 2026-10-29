@@ -101,7 +101,18 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001 - seeding is best-effort for local dev
         print(f"[run_local] Seed skipped/failed (continuing): {exc}")
     print("[run_local] Starting API at http://localhost:8000 (docs at /docs)")
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=False)
+    # Auto-reload on source changes so the local server never silently serves STALE code.
+    # Without this, editing a router/schema (e.g. adding `role_names` to GET /users) has no
+    # effect until the process is manually killed and restarted — which previously left the
+    # interviewer dropdown empty because the running server returned the old response shape.
+    # Watch only the application package to avoid reload loops on the SQLite file / uploads.
+    uvicorn.run(
+        "app.main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True,
+        reload_dirs=[str(pathlib.Path(__file__).resolve().parent / "app")],
+    )
 
 
 if __name__ == "__main__":

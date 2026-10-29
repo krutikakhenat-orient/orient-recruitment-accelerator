@@ -62,6 +62,7 @@ def test_model_tables_present() -> None:
         "interview_stage",
         "interview_slot",
         "interview_invitation",
+        "interview_assignment",
         "assessment",
         "hiring_decision",
         "waitlist_record",

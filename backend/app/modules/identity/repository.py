@@ -67,10 +67,16 @@ def get_organisation(db: Session, organisation_id: uuid.UUID) -> Organisation | 
     return db.get(Organisation, organisation_id)
 
 
-def list_users(db: Session, organisation_id: uuid.UUID) -> list[User]:
-    stmt = (
-        select(User)
-        .where(User.organisation_id == organisation_id, User.is_active.is_(True))
-        .order_by(User.display_name)
-    )
+def list_users(
+    db: Session, organisation_id: uuid.UUID, *, include_inactive: bool = False
+) -> list[User]:
+    """Staff users in the organisation, ordered by display name.
+
+    By default only ACTIVE users are returned (so pickers never offer a deactivated user).
+    ``include_inactive=True`` returns everyone, for the admin user-management table which
+    shows status (Active / Inactive)."""
+    stmt = select(User).where(User.organisation_id == organisation_id)
+    if not include_inactive:
+        stmt = stmt.where(User.is_active.is_(True))
+    stmt = stmt.order_by(User.display_name)
     return list(db.execute(stmt).scalars())

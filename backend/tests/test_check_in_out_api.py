@@ -17,6 +17,7 @@ from app.modules.identity.models import CampaignAssignment
 from app.modules.identity.permissions import RoleName
 from app.modules.identity.schemas import AuthenticatedActor
 from app.modules.interviews import service as interview_service
+from app.modules.interviews.models import InterviewAssignment
 from tests.factories import make_org, make_role, make_user
 
 PASSWORD = "CorrectHorseBatteryStaple1"
@@ -73,9 +74,16 @@ def _seed(engine, *, compensation=True):  # type: ignore[no-untyped-def]
         campaign.approved_form_version_id = form.id
         session.add(CampaignAssignment(user_id=admin.id, campaign_id=campaign.id,
                                        organisation_id=org.id))
+        # The panel member is assigned as an interviewer for this campaign (required for the
+        # interview panel to access candidates since interviewer-assignment isolation).
+        session.add(InterviewAssignment(
+            organisation_id=org.id, campaign_id=campaign.id, stage_id=None,
+            interviewer_id=panel.id, assigned_by=admin.id, is_active=True,
+        ))
         session.commit()
         return {
-            "org_id": org.id, "campaign_id": campaign.id,
+            "org_id": org.id, "campaign_id": campaign.id, "panel_id": panel.id,
+            "admin_id": admin.id,
             "admin_email": admin.email, "panel_email": panel.email,
         }
     finally:
@@ -172,6 +180,28 @@ def test_check_in_check_out_endpoints_full_flow(client, engine) -> None:
     assert r.status_code == 200, r.text
     assert r.json()["state"] == ApplicationState.CHECKED_OUT.value
 
+    # Regression: a CHECKED_OUT candidate MUST appear in the Hiring Decisions inbox (the
+    # check-in/out flow ends at CHECKED_OUT, not ASSESSED). Before the fix the inbox only
+    # queried ASSESSED, so checked-out candidates silently vanished from the tab.
+    r = client.get("/api/v1/decisions/pending", headers=admin)
+    assert r.status_code == 200, r.text
+    pending_ids = [row["application_id"] for row in r.json()]
+    assert application_id in pending_ids, "checked-out candidate missing from decisions inbox"
+
+    # And a decision can actually be recorded from the CHECKED_OUT state.
+    r = client.post(
+        "/api/v1/decisions",
+        headers=admin,
+        json={
+            "application_id": application_id,
+            "decision_type": "select",
+            "reason": "Strong interview; proceed to offer.",
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    r = client.get(f"/api/v1/applications/{application_id}", headers=admin)
+    assert r.json()["state"] == ApplicationState.SELECTED.value
+
 
 def test_salary_fields_present_in_application_answers(client, engine) -> None:
     s = _seed(engine, compensation=True)
@@ -227,11 +257,11 @@ def test_resume_download_404_when_no_resume(client, engine) -> None:
 
 
 def test_panel_can_read_interview_context_for_checked_in_candidate(client, engine) -> None:
-    """An interview-panel member (assessment.submit only, NOT candidate.view, NOT campaign-
-    assigned) can read the resume, the application, and the extracted fields for a candidate
-    they are actively interviewing (application checked in). This is the narrow grant that
-    makes the panel's Resume and Application Form tabs work (previously they 403'd with
-    "Missing required permission: candidate.view")."""
+    """An interview-panel member (assessment.submit only, NOT candidate.view) who IS
+    assigned to the campaign can read the resume, the application, and the extracted fields
+    for a candidate they are actively interviewing (application scheduled/checked in). This
+    is the narrow grant that makes the panel's Resume and Application Form tabs work, now
+    additionally gated by an active interviewer assignment to the candidate's campaign."""
     s = _seed(engine)
     application_id = _apply(client, s["campaign_id"])
     invitation_id = _drive_to_scheduled(engine, application_id, s["campaign_id"], s["admin_email"])

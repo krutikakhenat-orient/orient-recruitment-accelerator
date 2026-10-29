@@ -12,10 +12,17 @@
   --accent: #0ea5a5;
   --accent-600: #0b8585;
 
-  --bg: #f5f7fa;
+  /* Lavender-tinted accents for the premium glass theme (muted, professional). */
+  --lav-500: #6d6af0;
+  --lav-600: #5b57e0;
+  --lav-100: #ecebfb;
+
+  --bg: #f4f6fb;
   --surface: #ffffff;
   --surface-2: #f0f3f8;
-  --border: #d9e0ea;
+  /* Alias kept for rules that referenced --muted before it was defined. */
+  --muted: #5a6b80;
+  --border: #dbe2ee;
   --text: #16202e;
   --text-muted: #5a6b80;
   --text-faint: #8595a8;
@@ -29,10 +36,25 @@
   --info: #1456a0;
   --info-bg: #e7f0fb;
 
-  --radius: 10px;
-  --radius-sm: 6px;
-  --shadow-sm: 0 1px 2px rgba(16, 32, 46, 0.08);
-  --shadow: 0 6px 20px rgba(16, 32, 46, 0.12);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 18px;
+  --shadow-sm: 0 1px 2px rgba(16, 32, 46, 0.06);
+  --shadow: 0 10px 30px rgba(22, 32, 58, 0.10);
+  --shadow-lg: 0 24px 60px rgba(22, 32, 58, 0.16);
+
+  /* Glassmorphism surface + blur tokens. Cards layer a translucent white over the page
+     backdrop with a soft blur and a 1px light border + top highlight. */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-bg-strong: rgba(255, 255, 255, 0.86);
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-blur: 14px;
+
+  /* Motion tokens (respect prefers-reduced-motion below). */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
   --sidebar-w: 248px;
   --topbar-h: 60px;
 
@@ -43,7 +65,27 @@
 * { box-sizing: border-box; }
 
 html, body, #root { height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--text); line-height: 1.5; }
+/* Off-white page with two faint lavender/blue glows so frosted-glass cards read as glass. */
+body {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+  background:
+    radial-gradient(900px 500px at 12% -5%, rgba(109, 106, 240, 0.10), transparent 60%),
+    radial-gradient(1000px 600px at 110% 0%, rgba(20, 86, 160, 0.10), transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* Honour reduced-motion: disable transitions/animations for users who ask for it. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 a { color: var(--brand-600); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -100,13 +142,17 @@ a:hover { text-decoration: underline; }
 
 .main { display: flex; flex-direction: column; min-width: 0; }
 .topbar {
-  height: var(--topbar-h); background: var(--surface); border-bottom: 1px solid var(--border);
+  height: var(--topbar-h);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur));
+  border-bottom: 1px solid var(--glass-border);
   display: flex; align-items: center; gap: 14px; padding: 0 20px; position: sticky; top: 0;
   z-index: 20;
 }
 .topbar__title { font-weight: 700; font-size: 1.05rem; }
 .topbar__spacer { flex: 1; }
-.content { padding: 22px; max-width: 1200px; width: 100%; }
+.content { padding: 22px; max-width: 1200px; width: 100%; animation: page-in var(--dur) var(--ease); }
+@keyframes page-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ---------- Typography ---------- */
 h1 { font-size: 1.5rem; margin: 0 0 4px; }
@@ -118,8 +164,21 @@ h3 { font-size: 1rem; margin: 0 0 8px; }
 
 /* ---------- Cards & grids ---------- */
 .card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: var(--shadow-sm); padding: 18px; margin-bottom: 16px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 20px; margin-bottom: 18px;
+  position: relative;
+  transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+/* A subtle top highlight sells the frosted-glass edge. */
+.card::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 1px; border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent);
+  pointer-events: none;
 }
 .card__head { display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 12px; gap: 10px; }
@@ -144,18 +203,24 @@ h3 { font-size: 1rem; margin: 0 0 8px; }
 
 /* ---------- Buttons ---------- */
 .btn {
-  display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border);
-  background: var(--surface); color: var(--text); padding: 8px 14px; border-radius: 8px;
-  font-size: 0.9rem; cursor: pointer; font-weight: 600; transition: background .15s, border-color .15s;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  border: 1px solid var(--border); background: var(--glass-bg-strong); color: var(--text);
+  padding: 8px 14px; border-radius: 10px; font-size: 0.9rem; cursor: pointer; font-weight: 600;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
-.btn:hover { background: var(--surface-2); }
-.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn:hover { background: var(--surface); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.btn:active { transform: translateY(0) scale(0.98); box-shadow: none; }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: none; }
 .btn--primary { background: var(--brand-600); border-color: var(--brand-600); color: #fff; }
 .btn--primary:hover { background: var(--brand-700); }
-.btn--accent { background: var(--accent-600); border-color: var(--accent-600); color: #fff; }
-.btn--accent:hover { filter: brightness(1.05); }
+.btn--accent { background: var(--lav-600); border-color: var(--lav-600); color: #fff; }
+.btn--accent:hover { background: var(--lav-500); filter: none; }
 .btn--danger { background: var(--danger); border-color: var(--danger); color: #fff; }
-.btn--ghost { background: transparent; border-color: transparent; color: var(--brand-600); }
+.btn--ghost { background: transparent; border-color: transparent; color: var(--brand-600);
+  -webkit-backdrop-filter: none; backdrop-filter: none; }
+.btn--ghost:hover { background: var(--lav-100); box-shadow: none; }
 .btn--sm { padding: 5px 10px; font-size: 0.82rem; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
 
@@ -384,3 +449,85 @@ table.data tbody tr:hover { background: var(--brand-100); }
   .apply-link-layout { flex-direction: column; }
   .apply-qr { align-self: center; }
 }
+
+
+/* ====================================================================================
+   Report preview (in-app Excel) + candidate summary dashboard (glassmorphic)
+   ==================================================================================== */
+
+/* Full-width page shell used by the report preview and candidate summary routes. */
+.report-page { max-width: 1240px; }
+
+.report-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px;
+}
+.report-toolbar__search { flex: 1 1 260px; min-width: 220px; }
+.report-toolbar__spacer { flex: 1; }
+
+/* Sheet tabs (Candidates / Summary) — mirrors the Excel workbook's sheets. */
+.sheet-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+.sheet-tab {
+  border: 1px solid var(--glass-border); background: var(--glass-bg); color: var(--text-muted);
+  padding: 7px 14px; border-radius: 999px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+.sheet-tab:hover { color: var(--text); }
+.sheet-tab--active { background: var(--brand-600); border-color: var(--brand-600); color: #fff;
+  box-shadow: var(--shadow-sm); }
+
+/* A scrollable frozen-header table for the report preview. */
+.report-table-wrap {
+  overflow: auto; max-height: 68vh; border: 1px solid var(--glass-border);
+  border-radius: var(--radius); background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur));
+}
+table.report { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.88rem; }
+table.report th, table.report td {
+  text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+table.report thead th {
+  position: sticky; top: 0; z-index: 2; background: #eef1f8; color: var(--text-muted);
+  font-weight: 700; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+table.report tbody tr { transition: background var(--dur-fast) var(--ease); }
+table.report tbody tr:hover { background: var(--lav-100); }
+table.report td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.report-cell-list { margin: 0; padding-left: 16px; }
+.report-cell-list li { margin: 1px 0; }
+.report-muted { color: var(--text-faint); }
+
+/* Score pill used in preview + summary (colour + text, never colour alone). */
+.score-pill {
+  display: inline-flex; align-items: center; gap: 6px; font-weight: 700;
+  font-variant-numeric: tabular-nums; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid transparent;
+}
+.score-pill--ok { color: var(--ok); background: var(--ok-bg); }
+.score-pill--warn { color: var(--warn); background: var(--warn-bg); }
+.score-pill--danger { color: var(--danger); background: var(--danger-bg); }
+.score-pill--neutral { color: var(--text-muted); background: var(--surface-2); }
+
+/* Candidate summary dashboard */
+.summary-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px;
+  justify-content: space-between; margin-bottom: 4px; }
+.summary-scores { display: flex; gap: 26px; flex-wrap: wrap; }
+.summary-score__value { font-size: 2.1rem; font-weight: 800; color: var(--brand-700);
+  line-height: 1; font-variant-numeric: tabular-nums; }
+.summary-score__label { color: var(--text-muted); font-size: 0.78rem; text-transform: uppercase;
+  letter-spacing: 0.04em; margin-top: 4px; }
+.pill-group { display: flex; flex-wrap: wrap; gap: 8px; }
+.evidence-pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px;
+  font-size: 0.82rem; border: 1px solid var(--border); background: var(--glass-bg-strong);
+}
+.evidence-pill--ok { border-color: #bfe6cf; }
+.evidence-pill--missing { border-color: #f3c9ce; }
+.evidence-pill--review { border-color: #f1dca6; }
+
+/* Fade-in for lists/sections inside the glass pages. */
+.fade-in { animation: fade-in var(--dur) var(--ease); }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }

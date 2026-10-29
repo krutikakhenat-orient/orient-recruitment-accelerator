@@ -35,9 +35,10 @@ def list_pending_decisions(
     db: Session = Depends(get_db),
     actor: AuthenticatedActor = Depends(get_current_actor),
 ) -> list[PendingDecisionRead]:
-    """Assessed candidates awaiting a hiring decision, scoped to the actor's assigned
-    campaigns, each with the interview panel's assessment(s). This is the panel → decision
-    handoff. Visible to anyone who can recommend or approve a hiring decision."""
+    """Candidates whose interview is concluded (assessed or checked out) and awaiting a
+    hiring decision, scoped to the actor's assigned campaigns, each with the interview
+    panel's assessment(s). This is the panel → decision handoff. Visible to anyone who can
+    recommend or approve a hiring decision."""
     require_permission(actor, Permission.HIRING_DECISION_RECOMMEND)
     rows = service.list_pending_decisions(
         db, organisation_id=actor.organisation_id, campaign_ids=actor.assigned_campaign_ids

@@ -47,7 +47,7 @@ const RATING_SKILLS: { key: string; label: string }[] = [
 ];
 
 export function AssessmentsPage(): ReactNode {
-  const dash = useQuery({ queryKey: ["panel-dashboard"], queryFn: getPanelDashboard });
+  const dash = useQuery({ queryKey: ["panel-dashboard"], queryFn: () => getPanelDashboard() });
   // The candidate whose detail view (3 tabs) is open.
   const [openItem, setOpenItem] = useState<PanelInterview | null>(null);
 
@@ -61,6 +61,24 @@ export function AssessmentsPage(): ReactNode {
   const toCheckIn = interviews.filter((i) => i.stage === "to_check_in");
   const inProgress = interviews.filter((i) => i.stage === "to_assess" || i.stage === "to_check_out");
   const completed = interviews.filter((i) => i.stage === "completed");
+
+  // Group a list of interviews into job buckets keyed by the STABLE campaign id (never the
+  // display-name string), so two campaigns that happen to share a title stay separate and a
+  // bucket can never show candidates from an unrelated campaign. The heading shows the
+  // campaign's display name; the key is the campaign id. Backend already scopes the worklist
+  // to the authenticated interviewer's active assignments, so every bucket here is one this
+  // interviewer is assigned to.
+  const groupByRole = (list: PanelInterview[]): { id: string; label: string; rows: PanelInterview[] }[] => {
+    const groups = new Map<string, { label: string; rows: PanelInterview[] }>();
+    for (const i of list) {
+      const key = i.campaign_id;
+      const label = i.campaign_name || i.campaign_id;
+      const g = groups.get(key);
+      if (g) g.rows.push(i);
+      else groups.set(key, { label, rows: [i] });
+    }
+    return [...groups.entries()].map(([id, { label, rows }]) => ({ id, label, rows }));
+  };
 
   return (
     <>
@@ -85,26 +103,41 @@ export function AssessmentsPage(): ReactNode {
       {dash.isLoading && <Loading />}
       {dash.error && <ErrorNote>Could not load your interview list.</ErrorNote>}
 
+      {!dash.isLoading && !dash.error && interviews.length === 0 && (
+        <Card title="No interviews assigned">
+          <Empty>
+            You have not been assigned to any interviews yet. An administrator or recruiter
+            assigns interviewers to a job; once you are assigned, the candidates for that job
+            will appear here. You will only ever see candidates for jobs assigned to you.
+          </Empty>
+        </Card>
+      )}
+
       <Card title="Scheduled — waiting to check in">
         {toCheckIn.length === 0 ? (
           <Empty>No candidates are waiting to be checked in.</Empty>
         ) : (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Candidate</th>
-                  <th>Status</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {toCheckIn.map((i) => (
-                  <CheckInRow key={i.application_id} item={i} onOpen={() => setOpenItem(i)} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          groupByRole(toCheckIn).map(({ id, label, rows }) => (
+            <div key={id} style={{ marginBottom: 18 }}>
+              <RoleHeading role={label} count={rows.length} />
+              <div className="table-wrap">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>Candidate</th>
+                      <th>Status</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((i) => (
+                      <CheckInRow key={i.application_id} item={i} onOpen={() => setOpenItem(i)} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))
         )}
       </Card>
 
@@ -114,7 +147,10 @@ export function AssessmentsPage(): ReactNode {
             No interviews are in progress. A candidate appears here once you check them in.
           </Empty>
         ) : (
-          <div className="table-wrap">
+          groupByRole(inProgress).map(({ id, label, rows }) => (
+          <div key={id} style={{ marginBottom: 18 }}>
+            <RoleHeading role={label} count={rows.length} />
+            <div className="table-wrap">
             <table className="data">
               <thead>
                 <tr>
@@ -124,7 +160,7 @@ export function AssessmentsPage(): ReactNode {
                 </tr>
               </thead>
               <tbody>
-                {inProgress.map((i) => (
+                {rows.map((i) => (
                   <tr key={i.application_id}>
                     <td><strong>{i.candidate_name}</strong></td>
                     <td>
@@ -143,32 +179,39 @@ export function AssessmentsPage(): ReactNode {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
+          ))
         )}
       </Card>
 
       {completed.length > 0 && (
         <Card title="Completed — checked out">
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr><th>Candidate</th><th>Status</th><th /></tr>
-              </thead>
-              <tbody>
-                {completed.map((i) => (
-                  <tr key={i.application_id}>
-                    <td><strong>{i.candidate_name}</strong></td>
-                    <td><Badge tone="ok">Interview completed</Badge></td>
-                    <td style={{ textAlign: "right" }}>
-                      <Button variant="default" small onClick={() => setOpenItem(i)}>
-                        Review
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {groupByRole(completed).map(({ id, label, rows }) => (
+            <div key={id} style={{ marginBottom: 18 }}>
+              <RoleHeading role={label} count={rows.length} />
+              <div className="table-wrap">
+                <table className="data">
+                  <thead>
+                    <tr><th>Candidate</th><th>Status</th><th /></tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((i) => (
+                      <tr key={i.application_id}>
+                        <td><strong>{i.candidate_name}</strong></td>
+                        <td><Badge tone="ok">Interview completed</Badge></td>
+                        <td style={{ textAlign: "right" }}>
+                          <Button variant="default" small onClick={() => setOpenItem(i)}>
+                            Review
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
         </Card>
       )}
 
@@ -176,6 +219,17 @@ export function AssessmentsPage(): ReactNode {
         <CandidateDetail item={liveOpenItem} onClose={() => setOpenItem(null)} />
       )}
     </>
+  );
+}
+
+/* A role/campaign subheading used to group candidates by the position they are interviewing
+   for (e.g. "Network Security Engineer L2 · 4"). */
+function RoleHeading({ role, count }: { role: string; count: number }): ReactNode {
+  return (
+    <h3 style={{ margin: "4px 0 8px", display: "flex", alignItems: "center", gap: 8 }}>
+      <span>{role}</span>
+      <Badge tone="neutral">{count}</Badge>
+    </h3>
   );
 }
 
@@ -534,8 +588,10 @@ function ResumeTab({ applicationId }: { applicationId: string }): ReactNode {
     let objectUrl: string | null = null;
     setState("loading");
     setText(null);
-    // downloadResume returns null on 404 (no resume on file) so we show a clear message.
-    downloadResume(applicationId, token() ?? "")
+    // The panel's read-only Resume tab accepts the extracted-text fallback (clearly
+    // labelled) when the original file blob is unavailable, so the panel can still read the
+    // resume. Returns null on 404 (no resume at all) so we show a clear message.
+    downloadResume(applicationId, token() ?? "", { allowTextFallback: true })
       .then(async (res) => {
         if (revoked) return;
         if (!res) {

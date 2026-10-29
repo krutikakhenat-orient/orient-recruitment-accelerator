@@ -14,7 +14,12 @@ import jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.errors import AuthenticationError, ConflictError, ValidationError
+from app.core.errors import (
+    AuthenticationError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.security import (
     create_token,
     decode_token,
@@ -170,6 +175,44 @@ def create_user(
             new_state_ref="active",
         ),
     )
+    return user
+
+
+def deactivate_user(
+    db: Session,
+    *,
+    organisation_id: uuid.UUID,
+    user_id: uuid.UUID,
+    actor_id: uuid.UUID,
+) -> User:
+    """Soft-delete a staff user: mark them inactive. This is non-destructive — the row and
+    all existing relationships (campaign assignments, interviewer assignments, audit history,
+    any assessments they submitted) are preserved. A deactivated user can no longer sign in
+    and is excluded from active-user pickers (e.g. the interviewer dropdown). Idempotent.
+
+    Guards: the user must exist in the caller's organisation; a user cannot deactivate their
+    own account (so an admin cannot lock themselves out)."""
+    user = repo.get_user_by_id(db, user_id)
+    if user is None or user.organisation_id != organisation_id:
+        raise NotFoundError("User not found")
+    if user.id == actor_id:
+        raise ValidationError("You cannot delete your own account")
+    if user.is_active:
+        user.is_active = False
+        user.updated_by = actor_id
+        db.flush()
+        record_event(
+            db,
+            AuditEventWrite(
+                organisation_id=organisation_id,
+                actor_id=actor_id,
+                action="user.deactivated",
+                entity_type="user",
+                entity_id=str(user.id),
+                previous_state_ref="active",
+                new_state_ref="inactive",
+            ),
+        )
     return user
 
 

@@ -33,6 +33,10 @@ class Permission(str, Enum):
     SCREENING_OVERRIDE = "screening.override"
     INTERVIEW_APPROVE = "interview.approve"
     INTERVIEW_SCHEDULE = "interview.schedule"
+    # Manage interviewer assignments (which panel member interviews which campaign/stage).
+    # This is an ADMINISTRATIVE grant only — it governs assignment metadata and does NOT
+    # confer any candidate-content access (no candidate.view / resume / scores / scorecards).
+    INTERVIEW_ASSIGN = "interview.assign"
     ASSESSMENT_SUBMIT = "assessment.submit"
     HIRING_DECISION_RECOMMEND = "hiring_decision.recommend"
     HIRING_DECISION_APPROVE = "hiring_decision.approve"
@@ -107,6 +111,9 @@ _RECRUITER_ADMIN_APPROVALS: set[Permission] = {
     P.JD_APPROVE, P.RULE_APPROVE, P.THRESHOLD_CHANGE,
     P.CANDIDATE_VIEW_PII,
     P.INTERVIEW_APPROVE,
+    # Recruiter Admin owns the campaign operationally, so it also manages that campaign's
+    # interviewer panel assignments (object-level: only for campaigns it is assigned to).
+    P.INTERVIEW_ASSIGN,
     P.HIRING_DECISION_RECOMMEND, P.HIRING_DECISION_APPROVE,
 }
 
@@ -129,8 +136,13 @@ DEFAULT_ROLE_PERMISSIONS: dict[RoleName, set[Permission]] = {
     RoleName.AUDIT_VIEWER: {
         P.AUDIT_VIEW,
     },
+    # System Admin manages users/system/privacy. It ALSO manages interviewer assignments
+    # (assignment metadata only). It deliberately holds NO candidate-content permission
+    # (no candidate.view / view_pii / export, no assessment.submit): managing who interviews
+    # a job must never leak candidate profiles, resumes, scores, or scorecards.
     RoleName.SYSTEM_ADMIN: {
         P.USER_MANAGE, P.SYSTEM_CONFIGURE, P.PRIVACY_REQUEST_MANAGE,
+        P.INTERVIEW_ASSIGN,
     },
     RoleName.CANDIDATE: set(),  # candidate rights are modelled separately, not via staff perms
 }

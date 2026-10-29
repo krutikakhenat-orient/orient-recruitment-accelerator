@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_actor
@@ -34,7 +34,7 @@ def list_assignable(
     """Candidates who attended an interview and await this panel member's assessment.
     Requires assessment.submit. Returns only the candidate's name — no screening data."""
     require_permission(actor, Permission.ASSESSMENT_SUBMIT)
-    apps = service.list_assessable(db, actor.organisation_id)
+    apps = service.list_assessable(db, actor.organisation_id, actor.user_id)
     out: list[AssessableApplicationRead] = []
     for a in apps:
         name = a.answers.get("full_name") if isinstance(a.answers, dict) else None
@@ -50,14 +50,21 @@ def list_assignable(
 
 @router.get("/panel", response_model=PanelDashboardRead)
 def panel_dashboard(
+    campaign_id: uuid.UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     actor: AuthenticatedActor = Depends(get_current_actor),
 ) -> PanelDashboardRead:
     """The Interview Panel's own dashboard: interviews to attend / to assess / completed,
     with counts. Requires assessment.submit. Exposes only candidate names, no screening
-    data."""
+    data.
+
+    Strictly scoped to the authenticated interviewer's ACTIVE assignments (by campaign
+    UUID). An optional ``campaign_id`` narrows to one assigned job bucket; a campaign the
+    interviewer is not assigned to yields an empty worklist. No assignment => empty."""
     require_permission(actor, Permission.ASSESSMENT_SUBMIT)
-    rows = service.panel_worklist(db, actor.organisation_id)
+    rows = service.panel_worklist(
+        db, actor.organisation_id, actor.user_id, campaign_id=campaign_id
+    )
     interviews = [PanelInterviewRead(**r) for r in rows]
     counts = {"to_check_in": 0, "to_assess": 0, "to_check_out": 0, "completed": 0}
     for r in rows:

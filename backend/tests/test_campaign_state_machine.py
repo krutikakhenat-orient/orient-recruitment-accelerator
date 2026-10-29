@@ -120,3 +120,105 @@ def test_object_level_authz_blocks_unassigned_actor(db_session) -> None:
     with pytest.raises(PermissionDeniedError):
         transition(db_session, actor=outsider, campaign=campaign,
                    destination=CampaignState.CANCELLED, reason="x")
+
+
+def _drive(db_session, actor, campaign, *states):  # type: ignore[no-untyped-def]
+    """Set the campaign to a state directly (bypassing prerequisites) for lifecycle tests
+    that only care about the close/pause/complete/cancel/reopen edges, not the artifact
+    gates (those are covered by the prerequisite tests above)."""
+    for s in states:
+        campaign.state = s.value
+    db_session.flush()
+
+
+def test_close_applications_then_continue_screening(db_session) -> None:
+    # Req 1: closing applications is a valid transition and the pipeline continues from it.
+    _, _, actor, campaign = _seed_campaign(db_session)
+    _drive(db_session, actor, campaign, CampaignState.APPLICATIONS_OPEN)
+    transition(db_session, actor=actor, campaign=campaign,
+               destination=CampaignState.APPLICATIONS_CLOSED, reason="intake window over")
+    assert campaign.state == CampaignState.APPLICATIONS_CLOSED.value
+    # Screening can still begin on the already-collected candidates.
+    transition(db_session, actor=actor, campaign=campaign,
+               destination=CampaignState.SCREENING, reason="begin screening")
+    assert campaign.state == CampaignState.SCREENING.value
+
+
+def test_pause_and_resume_round_trip(db_session) -> None:
+    # Req 2: pause then resume returns to applications_open.
+    _, _, actor, campaign = _seed_campaign(db_session)
+    _drive(db_session, actor, campaign, CampaignState.APPLICATIONS_OPEN)
+    transition(db_session, actor=actor, campaign=campaign,
+               destination=CampaignState.PAUSED, reason="hiring freeze")
+    assert campaign.state == CampaignState.PAUSED.value
+    transition(db_session, actor=actor, campaign=campaign,
+               destination=CampaignState.APPLICATIONS_OPEN, reason="freeze lifted")
+    assert campaign.state == CampaignState.APPLICATIONS_OPEN.value
+
+
+def test_complete_then_close_then_reopen(db_session) -> None:
+    # Req 3 + 4: complete -> close, then an authorised user reopens the closed campaign.
+    _, _, actor, campaign = _seed_campaign(db_session)
+    _drive(db_session, actor, campaign, CampaignState.SELECTION_REVIEW)
+    transition(db_session, actor=actor, campaign=campaign,
+               destination=CampaignState.COMPLETED, reason="all offers made")
+    transition(db_session, actor=actor, campaign=campaign,
+               destination=CampaignState.CLOSED, reason="hiring finished")
+    assert campaign.state == CampaignState.CLOSED.value
+    # Reopen re-admits candidates (needs campaign.publish, which recruiter_admin holds).
+    transition(db_session, actor=actor, campaign=campaign,
+               destination=CampaignState.APPLICATIONS_OPEN, reason="headcount reopened")
+    assert campaign.state == CampaignState.APPLICATIONS_OPEN.value
+
+
+def test_archived_is_terminal(db_session) -> None:
+    # Req 4: archived has no outward transition (deliberately final).
+    _, _, actor, campaign = _seed_campaign(db_session)
+    _drive(db_session, actor, campaign, CampaignState.ARCHIVED)
+    assert allowed_destinations(CampaignState.ARCHIVED) == []
+    with pytest.raises(InvalidTransitionError):
+        transition(db_session, actor=actor, campaign=campaign,
+                   destination=CampaignState.APPLICATIONS_OPEN, reason="cannot reopen archived")
+
+
+@pytest.mark.parametrize(
+    "mid",
+    [
+        CampaignState.APPLICATIONS_OPEN,
+        CampaignState.APPLICATIONS_CLOSED,
+        CampaignState.SCREENING,
+        CampaignState.HUMAN_REVIEW,
+        CampaignState.INTERVIEW_PLANNING,
+        CampaignState.INTERVIEWING,
+        CampaignState.SELECTION_REVIEW,
+        CampaignState.PAUSED,
+    ],
+)
+def test_cancel_allowed_from_mid_pipeline_states(db_session, mid) -> None:
+    # Req 3: a role dropped partway can be cancelled from any pre-completion operational
+    # state. Parametrised so each case runs on a fresh session/campaign (cancel is terminal).
+    _, _, actor, campaign = _seed_campaign(db_session)
+    _drive(db_session, actor, campaign, mid)
+    transition(db_session, actor=actor, campaign=campaign,
+               destination=CampaignState.CANCELLED, reason="role withdrawn")
+    assert campaign.state == CampaignState.CANCELLED.value
+
+
+def test_cannot_cancel_a_completed_campaign(db_session) -> None:
+    # Completed is finished, not abandoned: cancel is not a valid move from it (use close).
+    _, _, actor, campaign = _seed_campaign(db_session)
+    _drive(db_session, actor, campaign, CampaignState.COMPLETED)
+    with pytest.raises(InvalidTransitionError):
+        transition(db_session, actor=actor, campaign=campaign,
+                   destination=CampaignState.CANCELLED, reason="x")
+
+
+def test_transition_requires_reason(db_session) -> None:
+    # Req 5: every lifecycle transition records a reason; a blank one is rejected.
+    from app.core.errors import ValidationError
+
+    _, _, actor, campaign = _seed_campaign(db_session)
+    _drive(db_session, actor, campaign, CampaignState.APPLICATIONS_OPEN)
+    with pytest.raises(ValidationError, match="reason"):
+        transition(db_session, actor=actor, campaign=campaign,
+                   destination=CampaignState.PAUSED, reason="   ")

@@ -3,9 +3,21 @@
 A production-quality, secure, and **explainable** recruitment campaign management and
 candidate screening platform.
 
-> Status: **All 7 phases implemented.** Backend: 115 tests passing, ruff + mypy (strict)
-> clean. Frontend: strict TypeScript, typecheck + tests passing. See
+> Status: **All 7 phases implemented.** Backend: full pytest suite passing, ruff + mypy
+> (strict) clean. Frontend: strict TypeScript, typecheck + tests passing. See
 > `.kiro/specs/recruitment-platform/tasks.md` for the implementation plan.
+>
+> Recent additions: an **HR campaign report** with a clean two-sheet **Excel export**
+> (Candidates + Summary) and a matching **in-app Preview Excel** view — both built from one
+> shared model so preview and download are identical (searchable/scrollable table, overall
+> score vs JD-skills-match, derived strengths & missing/unverified requirements, masked PII
+> unless `candidate.view_pii`); a per-candidate **Candidate summary** dashboard; a secure
+> per-candidate **Download résumé** action/link (original file only, *Resume unavailable*
+> when none); **role-based interviewer assignment** with strict interview-panel isolation;
+> and a **glassmorphic UI** refresh (frosted cards, muted blue/lavender accents, subtle
+> motion honouring `prefers-reduced-motion`). See
+> [docs/permission-matrix.md](docs/permission-matrix.md) and
+> [docs/api-reference.md](docs/api-reference.md).
 
 ## Core principles
 

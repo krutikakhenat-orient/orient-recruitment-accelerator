@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -40,6 +40,15 @@ _SAFE_INLINE_SUFFIX = {
 @router.get("/applications/{application_id}/resume")
 def download_application_resume(
     application_id: uuid.UUID,
+    fallback: str | None = Query(
+        default=None,
+        pattern="^text$",
+        description=(
+            "Set to 'text' to receive the extracted resume TEXT (clearly labelled, never "
+            "the original) when the original file blob is unavailable. Omit to require the "
+            "original file and get a 404 if it is missing."
+        ),
+    ),
     db: Session = Depends(get_db),
     actor: AuthenticatedActor = Depends(get_current_actor),
 ) -> Response:
@@ -48,9 +57,11 @@ def download_application_resume(
     Authorisation (object-level): either staff with candidate.view assigned to the
     application's campaign, OR an interview-panel member while the candidate is actively on
     the interview worklist (so the panel's Resume tab works without broad candidate.view).
-    The resume belongs to the selected candidate and to no other. Returns 404 when the
-    application has no resume on file or the document is not available (e.g. never passed
-    the scan), so callers can show a clear 'resume not available' message.
+    The resume belongs to the selected candidate and to no other.
+
+    By default this returns ONLY the original uploaded file and 404s if it is unavailable,
+    so extracted text is never mistaken for the original. Pass ``fallback=text`` to opt in
+    to the extracted-text fallback (served clearly labelled as extracted text).
     """
     app = application_service.get_application(db, actor.organisation_id, application_id)
     application_service.authorize_candidate_context_read(db, actor=actor, application=app)
@@ -77,28 +88,49 @@ def download_application_resume(
                         "Content-Disposition": f'attachment; filename="{safe_filename}"',
                         "X-Content-Type-Options": "nosniff",
                         "Cache-Control": "no-store",
+                        # Signals this IS the original uploaded file (bytes verbatim).
+                        "X-Resume-Source": "original-file",
                     },
                 )
 
-    # Fallback: the original file blob is not available (no document on file, or the stored
-    # blob was lost — e.g. a dev object store that did not persist across restarts). If the
-    # resume TEXT was extracted and stored, serve that as a plain-text resume so the panel
-    # can still read the candidate's resume content instead of an empty tab. This is text the
-    # system already holds for screening; it is served as an attachment with nosniff, never
-    # rendered as active content.
-    resume_text = _extracted_resume_text(db, actor.organisation_id, application_id)
-    if resume_text:
-        return Response(
-            content=resume_text.encode("utf-8"),
-            media_type="text/plain; charset=utf-8",
-            headers={
-                "Content-Disposition": f'attachment; filename="resume-{application_id}.txt"',
-                "X-Content-Type-Options": "nosniff",
-                "Cache-Control": "no-store",
-            },
-        )
+    # The original file blob is NOT available (no document on file, or the stored blob was
+    # lost — e.g. a dev object store that did not persist across restarts).
+    #
+    # The optional ``fallback=text`` query flag lets a caller that deliberately wants the
+    # extracted text (e.g. the Interview Panel's read-only Resume tab) receive it. That
+    # fallback is served as a CLEARLY-LABELLED extracted-text file — a distinct filename and
+    # an X-Resume-Source header — so it is never mistaken for the original upload. Without
+    # the flag (the default, and what the HR "Download résumé" action uses) a missing
+    # original returns a clear 404 rather than silently substituting extracted text.
+    if fallback == "text":
+        resume_text = _extracted_resume_text(db, actor.organisation_id, application_id)
+        if resume_text:
+            banner = (
+                "NOTE: The original resume file is not available. The following is the "
+                "plain TEXT extracted from the resume at upload time, not the original "
+                "document.\n"
+                "----------------------------------------------------------------------\n\n"
+            )
+            body = (banner + resume_text).encode("utf-8")
+            return Response(
+                content=body,
+                media_type="text/plain; charset=utf-8",
+                headers={
+                    "Content-Disposition": (
+                        f'attachment; filename="resume-{application_id}-EXTRACTED-TEXT.txt"'
+                    ),
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "no-store",
+                    # Signals this is NOT the original file — extracted text only.
+                    "X-Resume-Source": "extracted-text-fallback",
+                },
+            )
 
-    raise NotFoundError("No resume is on file for this application")
+    # No original file available (and no text fallback requested / none stored): a clear
+    # missing-original response so a caller never mistakes extracted text for the original.
+    raise NotFoundError(
+        "The original resume file is not available for this application."
+    )
 
 
 def _extracted_resume_text(

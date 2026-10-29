@@ -90,18 +90,50 @@ TRANSITIONS: tuple[TransitionRule, ...] = (
                    "campaign_completed", requires_approval=True),
     TransitionRule(S.COMPLETED, S.CLOSED, P.CAMPAIGN_EDIT, "campaign_closed"),
     TransitionRule(S.CLOSED, S.ARCHIVED, P.CAMPAIGN_EDIT, "campaign_archived"),
+    # Reopen a closed campaign. Only an authoriser who can publish/open a campaign may
+    # reopen it, and reopening re-admits candidates so it carries candidate-communication
+    # impact. ARCHIVED remains terminal (a deliberately final, retained-record state); to
+    # reuse an archived role, create a new campaign. (Req 4: "unless an authorised user
+    # reopens the campaign".)
+    TransitionRule(S.CLOSED, S.APPLICATIONS_OPEN, P.CAMPAIGN_PUBLISH, "campaign_reopened",
+                   candidate_communication_impact=True),
     # Pause / resume.
     TransitionRule(S.APPLICATIONS_OPEN, S.PAUSED, P.CAMPAIGN_PAUSE, "campaign_paused",
                    candidate_communication_impact=True),
     TransitionRule(S.PAUSED, S.APPLICATIONS_OPEN, P.CAMPAIGN_PAUSE, "campaign_resumed",
                    candidate_communication_impact=True),
-    # Cancellation is permitted from early states only.
+    # Cancellation closes a campaign whose hiring is abandoned. It is permitted from the
+    # early setup states AND from the live operational states (post-open), because a role
+    # can be dropped at any point before completion (Req 3: "when hiring is finished or
+    # cancelled"). Cancelling preserves every candidate, resume, score, interview and
+    # assignment record; it only stops new applications and new recruitment actions. It is
+    # NOT permitted from COMPLETED (use close) or from CLOSED/ARCHIVED (already terminal).
     TransitionRule(S.DRAFT, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled"),
     TransitionRule(S.JD_UPLOADED, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled"),
     TransitionRule(S.JD_REVIEW, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled"),
     TransitionRule(S.CRITERIA_CONFIGURATION, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled"),
     TransitionRule(S.CRITERIA_REVIEW, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled"),
     TransitionRule(S.APPROVAL_PENDING, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled"),
+    TransitionRule(S.APPROVED, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
+    TransitionRule(S.PUBLISHED, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
+    TransitionRule(S.APPLICATIONS_OPEN, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
+    TransitionRule(S.APPLICATIONS_CLOSED, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
+    TransitionRule(S.PAUSED, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
+    TransitionRule(S.SCREENING, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
+    TransitionRule(S.HUMAN_REVIEW, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
+    TransitionRule(S.INTERVIEW_PLANNING, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
+    TransitionRule(S.INTERVIEWING, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
+    TransitionRule(S.SELECTION_REVIEW, S.CANCELLED, P.CAMPAIGN_EDIT, "campaign_cancelled",
+                   candidate_communication_impact=True),
 )
 
 _TRANSITION_INDEX: dict[tuple[CampaignState, CampaignState], TransitionRule] = {

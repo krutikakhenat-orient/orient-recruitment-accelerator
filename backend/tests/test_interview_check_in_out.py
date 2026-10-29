@@ -25,6 +25,9 @@ from app.modules.interviews.models import AttendanceStatus, InterviewInvitation
 from tests.factories import make_org
 
 CAMPAIGN = uuid.uuid4()
+# Stable panel-member user id so an interviewer assignment created in _scheduled matches the
+# actor used to drive check-in/assess/check-out across these tests.
+PANEL_USER_ID = uuid.uuid4()
 
 
 def _admin(org) -> AuthenticatedActor:  # type: ignore[no-untyped-def]
@@ -38,12 +41,26 @@ def _admin(org) -> AuthenticatedActor:  # type: ignore[no-untyped-def]
 
 
 def _panel(org) -> AuthenticatedActor:  # type: ignore[no-untyped-def]
-    """A real Interview Panel member: ONLY assessment.submit, not campaign-assigned."""
+    """A real Interview Panel member: ONLY assessment.submit. Not campaign-assigned (that is
+    the recruiter/HR object-level link); interview access comes from an InterviewAssignment
+    created in _scheduled for this stable PANEL_USER_ID."""
     return AuthenticatedActor(
-        user_id=uuid.uuid4(), organisation_id=org.id, email="panel@example.com",
+        user_id=PANEL_USER_ID, organisation_id=org.id, email="panel@example.com",
         role_names=[RoleName.INTERVIEW_PANEL.value],
         permissions={"assessment.submit"}, assigned_campaign_ids=set(),
     )
+
+
+def _assign_panel(db_session, org) -> None:  # type: ignore[no-untyped-def]
+    """Give the stable panel member an active interviewer assignment to CAMPAIGN so the new
+    interviewer-isolation checks permit their interview-day actions."""
+    from app.modules.interviews.models import InterviewAssignment
+
+    db_session.add(InterviewAssignment(
+        organisation_id=org.id, campaign_id=CAMPAIGN, stage_id=None,
+        interviewer_id=PANEL_USER_ID, assigned_by=uuid.uuid4(), is_active=True,
+    ))
+    db_session.flush()
 
 
 def _application(db_session, org, state: ApplicationState) -> Application:  # type: ignore[no-untyped-def]
@@ -73,6 +90,7 @@ def _scheduled(db_session, org, admin):  # type: ignore[no-untyped-def]
         db_session, actor=admin, invitation_id=inv.id, slot_id=slot.id
     )
     assert app.state == ApplicationState.INTERVIEW_SCHEDULED.value
+    _assign_panel(db_session, org)
     return app, inv
 
 
@@ -115,6 +133,7 @@ def test_check_in_rejected_when_not_scheduled(db_session) -> None:
     )
     db_session.add(inv)
     db_session.flush()
+    _assign_panel(db_session, org)  # assigned interviewer; the state guard is what rejects
     with pytest.raises(ConflictError, match="scheduled"):
         interview_service.check_in(db_session, actor=_panel(org), invitation_id=inv.id)
 
@@ -233,7 +252,7 @@ def test_panel_worklist_stages_across_lifecycle(db_session) -> None:
     panel = _panel(org)
 
     def stage_for(application_id: uuid.UUID) -> str:
-        work = assessment_service.panel_worklist(db_session, org.id)
+        work = assessment_service.panel_worklist(db_session, org.id, PANEL_USER_ID)
         return next(w["stage"] for w in work if w["application_id"] == application_id)
 
     assert stage_for(app.id) == "to_check_in"
@@ -287,10 +306,10 @@ def test_legacy_attended_state_still_assessable(db_session) -> None:
     """Historical records in the legacy ATTENDED state remain assessable (no silent
     conversion of old data)."""
     org = make_org(db_session)
-    admin = _admin(org)
     app = _application(db_session, org, ApplicationState.ATTENDED)
+    _assign_panel(db_session, org)  # the assessor must be an assigned interviewer
     assessment_service.submit_assessment(
-        db_session, actor=admin, application=app, criteria_scores={"technical": 4},
+        db_session, actor=_panel(org), application=app, criteria_scores={"technical": 4},
         recommendation=AssessmentRecommendation.PROCEED,
     )
     assert app.state == ApplicationState.ASSESSED.value

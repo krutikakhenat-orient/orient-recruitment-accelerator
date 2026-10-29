@@ -1,6 +1,7 @@
 # Orient Recruitment Accelerator — Project Documentation
 
-Version: 1.0 · Status: all 7 build phases implemented · Last reviewed against source on
+Version: 1.1 · Status: all 7 build phases implemented, plus campaign Excel export, secure
+résumé download, and role-based interviewer assignment · Last reviewed against source on
 2026-10-08.
 
 A production-quality, secure, and **explainable** recruitment campaign management and
@@ -55,13 +56,18 @@ The platform runs the full recruitment lifecycle for an organisation:
   auto-rejects**; borderline/low-confidence cases route to human review.
 - **Review queue** — reviewers advance, hold, request info, waitlist, or escalate.
 - **Interviews** — stages, slots, invitations (approved via four-eyes). Recruiters schedule;
-  the Interview Panel confirms **attendance** from its own dashboard.
-- **Assessments & decisions** — the panel confirms attendance and submits assessments; final
-  select/reject requires approval authority (Recruiter Admin).
+  the Interview Panel confirms **attendance** from its own dashboard. **Interviewer
+  assignment** scopes each panel member to the jobs/stages they are assigned to.
+- **Assessments & decisions** — the panel confirms attendance and submits assessments (each
+  interviewer keeps an independent scorecard); final select/reject requires approval
+  authority (Recruiter Admin).
 - **Waitlist** — candidates can be waitlisted and the list re-evaluated.
 - **Talent pool** — searchable by skill, with candidate-controlled withdrawal.
 - **Privacy & retention** — data subject requests and retention policies.
-- **Reporting & audit** — HR and management dashboards, plus a hash-chained audit log.
+- **Reporting & audit** — HR and management dashboards, a **campaign Excel export** of all
+  candidates (saved scores/ranks, masked PII), plus a hash-chained audit log.
+- **Résumé download** — authorised staff (and assigned panel members) download a candidate's
+  résumé through a secure, audited endpoint; files are never served from a public URL.
 
 ## 2. Core principles
 
@@ -188,11 +194,11 @@ Three operational roles plus four governance/public roles. Seed accounts: email
 | Role | What it can do |
 |---|---|
 | Recruiter | Create projects/campaigns; author JD/rules; **run screening**; review applications; schedule interviews; manage waitlist. The authoring side of four-eyes. |
-| Recruiter Admin | Everything the Recruiter does **plus** all approvals/sign-off: **approve** JD, rules, thresholds, interviews, and final hiring decisions; correct candidate data; audited PII reveal. Does **not** hold system administration. |
-| Interview Panel | Confirm interview **attendance** and submit structured assessments for candidates they interview. |
+| Recruiter Admin | Everything the Recruiter does **plus** all approvals/sign-off: **approve** JD, rules, thresholds, interviews, and final hiring decisions; correct candidate data; audited PII reveal; **assign interviewers** to its campaigns (`interview.assign`). Does **not** hold system administration. |
+| Interview Panel | Confirm interview **attendance** and submit structured assessments — limited to the jobs/stages they are **assigned** to. |
 | Management Viewer | Aggregated dashboards only; no candidate PII |
 | Audit Viewer | Read-only audit log |
-| System Admin | Manage users, system config, privacy requests. No automatic candidate-content access. |
+| System Admin | Manage users, system config, privacy requests; **assign interviewers** organisation-wide (`interview.assign`, metadata only). No automatic candidate-content access. |
 | Candidate | Not a staff user; applies via the public page |
 
 > The former **HR Head** and **Hiring Manager** roles were consolidated into **Recruiter
@@ -368,10 +374,14 @@ Health probes (unversioned): `GET /health`, `GET /ready`.
 | Interviews | POST `/interviews/slots` | Create a slot |
 | Interviews | POST `/interviews/invitations/approve` | Approve an invitation |
 | Interviews | POST `/interviews/invitations/{id}/assign-slot` | Assign a slot |
-| Interviews | POST `/interviews/invitations/{id}/attendance` | Record attendance (Interview Panel) |
-| Assessments | GET `/assessments/panel` | Interview Panel dashboard (to-attend / to-assess / completed) |
-| Assessments | GET `/assessments/assignable` | Candidates awaiting this panel member's assessment |
-| Assessments | POST `/assessments` | Submit an assessment |
+| Interviews | POST `/interviews/invitations/{id}/attendance` | Record attendance (Interview Panel, assigned) |
+| Interviews | POST/GET `/interviews/campaigns/{id}/assignments` | Assign / list interviewer assignments (`interview.assign`, metadata only) |
+| Interviews | PATCH/DELETE `/interviews/assignments/{id}` | Change stage scope / soft-remove an assignment (`interview.assign`) |
+| Interviews | GET `/interviews/my-assignments` | The signed-in interviewer's own assignment buckets |
+| Assessments | GET `/assessments/panel` | Interview Panel dashboard, scoped to the member's assignments (optional `?campaign_id=`) |
+| Assessments | GET `/assessments/assignable` | Candidates awaiting this panel member's assessment (assigned campaigns only) |
+| Assessments | POST `/assessments` | Submit an assessment (assigned candidate only) |
+| Documents | GET `/documents/applications/{id}/resume` | Securely download a candidate's résumé (candidate.view + assignment, or assigned panel member) |
 | Decisions | GET `/decisions/pending`; GET `/decisions/outcomes` | Assessed-awaiting-decision / decided candidates |
 | Decisions | POST `/decisions` | Record a hiring decision |
 | Waitlist | POST `/waitlist`; POST `/waitlist/reevaluate` | Add / re-evaluate |
@@ -379,6 +389,8 @@ Health probes (unversioned): `GET /health`, `GET /ready`.
 | Privacy | POST `/privacy/requests`; POST `/privacy/requests/{id}/complete` | DSAR workflow |
 | Privacy | POST `/privacy/retention-policies` | Set a retention policy |
 | Reports | GET `/reports/hr-dashboard`; GET `/reports/management-dashboard` | Dashboards |
+| Reports | GET `/reports/campaigns/{id}/report` | In-app report preview (JSON) — same records as the Excel download |
+| Reports | GET `/reports/campaigns/{id}/export` | Download the HR two-sheet `.xlsx` of a campaign's candidates (saved scores/ranks; PII masked unless `candidate.view_pii`) |
 | Audit | GET `/audit` | List hash-chained audit events |
 | Dev (local only) | POST `/dev/campaigns/{id}/open-now` | Create+approve all artifacts and open the campaign |
 
@@ -409,6 +421,10 @@ dev-only router (`/api/v1/dev/*`) is not registered in production-like environme
 
 - **AuthN:** JWT access + refresh; Argon2id hashing; account lockout; TOTP scaffold. Tokens
   are held in memory only on the frontend (never localStorage).
+- **Interviewer isolation:** interview-panel access (worklist, resume/application reads,
+  check-in/out, attendance, assessment) is object-level — scoped to the panel member's
+  active `interview_assignment` rows by stable campaign UUID (and stage when set), enforced
+  in the backend services; a forged application id from an unassigned campaign is refused.
 - **AuthZ:** fine-grained permissions + object-level campaign assignment on every protected
   endpoint, server-side and authoritative regardless of UI.
 - **Separation of duties / four-eyes:** rule-set and threshold approval, and select/reject

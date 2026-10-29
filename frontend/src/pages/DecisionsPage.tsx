@@ -39,7 +39,7 @@ export function DecisionsPage(): ReactNode {
         {pending.data && pending.data.length === 0 && (
           <Empty>
             No candidates are awaiting a hiring decision. Candidates appear here once the interview
-            panel submits their assessment.
+            panel has assessed and checked them out.
           </Empty>
         )}
         {pending.data && pending.data.length > 0 && (

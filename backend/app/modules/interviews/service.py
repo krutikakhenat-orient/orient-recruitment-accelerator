@@ -238,17 +238,31 @@ def record_attendance(
     invitation = db.get(InterviewInvitation, invitation_id)
     if invitation is None or invitation.organisation_id != actor.organisation_id:
         raise NotFoundError("Invitation not found")
+    application = db.get(Application, invitation.application_id)
+    if application is None or application.organisation_id != actor.organisation_id:
+        raise NotFoundError("Application not found")
+    _require_panel_assignment(db, actor=actor, application=application)
     invitation.attendance = (
         AttendanceStatus.ATTENDED.value if attended else AttendanceStatus.NO_SHOW.value
     )
     db.flush()
 
-    application = db.get(Application, invitation.application_id)
-    if application is not None and application.state == ApplicationState.INTERVIEW_SCHEDULED.value:
+    if application.state == ApplicationState.INTERVIEW_SCHEDULED.value:
         destination = ApplicationState.ATTENDED if attended else ApplicationState.NO_SHOW
         transition(db, application=application, destination=destination,
                    reason="attendance recorded", actor=actor)
     return invitation
+
+
+def _require_panel_assignment(
+    db: Session, *, actor: AuthenticatedActor, application: Application
+) -> None:
+    """Delegate to the assessments service's interviewer-isolation guard (local import to
+    avoid a circular import at module load). Raises PermissionDeniedError when the panel
+    member is not assigned to the application's campaign/stage."""
+    from app.modules.assessments import service as assessment_service
+
+    assessment_service.require_panel_assignment(db, actor=actor, application=application)
 
 
 def _invitation_for_application(
@@ -290,6 +304,7 @@ def check_in(
         raise ConflictError(
             "Only a scheduled candidate who has not yet checked in can be checked in"
         )
+    _require_panel_assignment(db, actor=actor, application=application)
 
     invitation.checked_in_at = _now()
     invitation.attendance = AttendanceStatus.CHECKED_IN.value
@@ -337,6 +352,7 @@ def check_out(
         raise ConflictError(
             "The assessment must be submitted before the candidate can be checked out"
         )
+    _require_panel_assignment(db, actor=actor, application=application)
 
     invitation.checked_out_at = _now()
     invitation.attendance = AttendanceStatus.CHECKED_OUT.value

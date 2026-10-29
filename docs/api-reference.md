@@ -107,6 +107,25 @@ and reviewer notes are never shown to the candidate.
 | GET    | `/{application_id}/extracted-fields`                   | List resume-extracted fields         |
 | POST   | `/{application_id}/extracted-fields/{field_id}/verify` | Verify/correct a field               |
 
+### Documents — `/api/v1/documents`
+| Method | Path                                      | Purpose                              |
+|--------|-------------------------------------------|--------------------------------------|
+| GET    | `/applications/{application_id}/resume`   | Download a candidate's resume (authenticated, authorised) |
+
+Resumes are **never** served from a public/bucket URL. This endpoint streams the file as an
+attachment (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`) only to an
+authorised caller: staff with `candidate.view` assigned to the campaign, **or** an interview
+panel member assigned to the campaign while the candidate is on the interview worklist. Only
+a CLEAN (malware-scanned) document is returned. By default it returns the **original uploaded
+file only** and responds `404` when the original is unavailable — so extracted text is never
+passed off as the original. A caller that deliberately wants the extracted resume text (the
+interview-panel read-only preview) may pass `?fallback=text`, which returns the extracted
+text clearly labelled as such (distinct filename + `X-Resume-Source: extracted-text-fallback`
+header). The Recruiter/HR Applications tab, the in-app report preview, and the Excel
+workbook all expose this as a per-candidate **Download résumé** action/link (shown only to
+users with `candidate.view` + campaign assignment); an unavailable resume shows
+**Resume unavailable**, never a broken link.
+
 ### Candidates — `/api/v1/candidates`
 | Method | Path                                   | Purpose                                             |
 |--------|----------------------------------------|-----------------------------------------------------|
@@ -134,25 +153,44 @@ and reviewer notes are never shown to the candidate.
 | POST   | `/invitations/approve`                     | Approve an invitation (optional `reason`; **required** when the candidate is under review / below the 50% bar) |
 | POST   | `/invitations/walk-in`                     | Select-for-interview express path: approve + auto-schedule in one call, placing the candidate on the Interview Panel. `reason` **required** for below-threshold candidates (recorded as a screening override) |
 | POST   | `/invitations/{invitation_id}/assign-slot` | Assign a slot to invitation |
-| POST   | `/invitations/{invitation_id}/attendance`  | Record attendance — **Interview Panel** (assessment.submit), not the scheduling recruiter |
+| POST   | `/invitations/{invitation_id}/attendance`  | Record attendance — **Interview Panel** (assessment.submit, assigned to the campaign), not the scheduling recruiter |
+| POST   | `/invitations/{invitation_id}/check-in`    | Interview-day check-in — Interview Panel, assigned to the campaign |
+| POST   | `/invitations/{invitation_id}/check-out`   | Interview-day check-out (after assessment) — Interview Panel, assigned to the campaign |
+| GET    | `/campaigns/{campaign_id}/assignments`     | List interviewer assignments for a campaign (metadata only); `interview.assign` |
+| POST   | `/campaigns/{campaign_id}/assignments`     | Assign an interviewer to the campaign (optional `stage_id`); idempotent; `interview.assign` |
+| PATCH  | `/assignments/{assignment_id}`             | Change an assignment's stage scope; `interview.assign` |
+| DELETE | `/assignments/{assignment_id}`             | Soft-remove an assignment (preserves submitted assessments); `interview.assign` |
+| GET    | `/my-assignments`                          | The authenticated interviewer's own assignment buckets (campaign id + label); `assessment.submit` |
 
 Candidates scoring **≥ 50%** are placed on the Interview Panel automatically on submit.
 A Recruitment Admin can still **Select for interview** a below-50 (under-review) candidate
 from the Applications/Interviews view; that is a screening override and requires a recorded
 `reason`, which is written to the audit trail.
 
+**Interviewer assignment & isolation.** `interview.assign` (System Admin org-wide, Recruiter
+Admin for campaigns it manages) controls which panel members interview which campaign/stage.
+A panel member only sees and can act on candidates for jobs (and stages) they are assigned
+to; the assignment endpoints expose assignment metadata only — never candidate profiles,
+resumes, scores, or scorecards. See `docs/permission-matrix.md` → *Interviewer assignment &
+panel isolation*.
+
 ### Assessments — `/api/v1/assessments`  _(Interview Panel)_
 | Method | Path          | Purpose                                                      |
 |--------|---------------|--------------------------------------------------------------|
-| GET    | `/panel`      | The panel member's own dashboard: to-attend / to-assess / completed counts + list |
-| GET    | `/assignable` | Candidates who attended and await this panel member's assessment |
-| POST   | ``            | Submit an interview assessment/score                         |
+| GET    | `/panel`      | The panel member's own dashboard: to-attend / to-assess / completed counts + list. Scoped to the member's active assignments; optional `?campaign_id=` narrows to one assigned job bucket (by stable UUID) |
+| GET    | `/assignable` | Candidates who attended and await this panel member's assessment (only for campaigns they are assigned to) |
+| POST   | ``            | Submit an interview assessment/score (only for an assigned candidate)        |
 
 **Attendance belongs to the Interview Panel.** Marking a candidate attended / no-show is
 done by the panel (permission `assessment.submit`), not by the recruiter who scheduled the
 interview — recruiters create stages and slots but never confirm who showed up. The panel
 dashboard surfaces each invited interview, lets the member mark attendance, and then
 (once attended) collects the assessment. See `docs/state-machines.md`.
+
+**Panel isolation.** The panel worklist and assessment submission are restricted to
+candidates for jobs (and stages) the authenticated interviewer is assigned to (see
+*Interviewer assignment* above). A member with no assignment gets an empty worklist; buckets
+are keyed by stable campaign UUID so two jobs with the same title never merge.
 
 ### Decisions — `/api/v1/decisions`
 | Method | Path        | Purpose                                                       |
@@ -180,10 +218,50 @@ dashboard surfaces each invited interview, lets the member mark attendance, and 
 | POST   | `/retention-policies`             | Set a retention policy         |
 
 ### Reports — `/api/v1/reports`
-| Method | Path                     | Purpose                        |
-|--------|--------------------------|--------------------------------|
-| GET    | `/hr-dashboard`          | HR operational dashboard       |
-| GET    | `/management-dashboard`  | Aggregated management metrics  |
+| Method | Path                                   | Purpose                        |
+|--------|----------------------------------------|--------------------------------|
+| GET    | `/hr-dashboard`                        | HR operational dashboard       |
+| GET    | `/management-dashboard`                | Aggregated management metrics  |
+| GET    | `/campaigns/{campaign_id}/report`      | **In-app report preview** (JSON): the same candidate records the Excel download contains, for the on-screen preview table; `candidate.view` + campaign assignment |
+| GET    | `/campaigns/{campaign_id}/export`      | Download the HR `.xlsx` of every candidate in a campaign using the **saved** scores/ranks (no rescoring); `candidate.view` + campaign assignment |
+
+**One shared report model.** Both the JSON preview (`/report`) and the `.xlsx` download
+(`/export`) are built from a single `report_builder.build_campaign_report` model, so the
+in-app **Preview Excel** table and the downloaded workbook always show identical candidate
+records (same rows, same order). Read-only: both reuse the saved screening ranking
+(`list_ranked_for_campaign`); nothing is recomputed and no records are mutated.
+
+The workbook is an HR-focused **two-sheet** file:
+
+- **Candidates** — one decision-relevant row per candidate: Rank, Candidate name, Email
+  address, Contact number, Applied position, Application status, **Overall score (%)**,
+  **JD skills match (%)**, Relevant skills & experience, Key strengths, Missing / unverified
+  requirements, a **Download Resume** hyperlink, and a **Candidate summary** hyperlink.
+  Frozen header row, autofilter, sensible column widths.
+- **Summary** — campaign facts and a short legend distinguishing the two scores.
+
+Scores and derived fields (never invented):
+
+- **Overall score** is the saved deterministic fit score (`ScreeningRun.score`, 0–100%).
+- **JD skills match %** is *derived* from the JD skill criteria only (`criterion_type ==
+  "exact_skill"`, awarded ÷ max); it shows "Not provided" when a run has no skill criteria.
+  It is a distinct number from the overall score and always labelled as derived.
+- **Relevant skills / key strengths** and **missing / unverified requirements** are derived
+  from the saved `CriterionResult` rows (pass → strength/skill; must-have fail → missing
+  requirement; `manual_review` → needs human verification). No stored fields are invented.
+
+Internal IDs (application/candidate UUIDs) and technical metadata (rule-set/engine versions,
+hashes) are **not** shown as columns — an application id appears only inside the
+authenticated resume/summary hyperlink targets.
+
+Contact PII: email/phone are **masked** unless the caller holds `candidate.view_pii`, in
+which case the report routes through the audited `candidates.service.reveal_contact` (every
+reveal is logged) and shows the real values. All untrusted text is neutralised against
+spreadsheet-formula injection; the `.xlsx` is served as an attachment with
+`X-Content-Type-Options: nosniff`. The hyperlinks point at authenticated SPA routes
+(`{app_base_url}/resume/{id}` and `{app_base_url}/campaigns/{campaign}/candidates/{id}`),
+never a public/bucket URL; `app_base_url` is configurable via `ORA_APP_BASE_URL` for
+deployed environments.
 
 ### Audit — `/api/v1/audit`
 | Method | Path | Purpose                           |

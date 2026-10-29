@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { useAuth } from "../app/auth-context";
@@ -15,6 +15,7 @@ interface LoginForm {
 export function LoginPage(): ReactNode {
   const { signIn } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [formError, setFormError] = useState<string | null>(null);
   const {
     register,
@@ -22,11 +23,17 @@ export function LoginPage(): ReactNode {
     formState: { errors, isSubmitting },
   } = useForm<LoginForm>();
 
+  // Return the user to the page they were sent from (e.g. a deep link to a candidate's
+  // resume download opened from the Excel export), falling back to the dashboard. Only
+  // same-origin internal paths are honoured so an attacker cannot craft an open redirect.
+  const rawFrom = (location.state as { from?: string } | null)?.from;
+  const redirectTo = typeof rawFrom === "string" && rawFrom.startsWith("/") ? rawFrom : "/";
+
   async function onSubmit(values: LoginForm): Promise<void> {
     setFormError(null);
     try {
       await signIn(values.email, values.password);
-      navigate("/", { replace: true });
+      navigate(redirectTo, { replace: true });
     } catch (err) {
       setFormError(
         err instanceof ApiError

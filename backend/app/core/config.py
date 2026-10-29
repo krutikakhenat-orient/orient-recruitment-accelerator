@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     # --- CORS (restricted) ---
     cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
+    # Public base URL of the FRONTEND SPA, used to build absolute links in generated
+    # artifacts (e.g. the Excel export's per-candidate "Download Resume" hyperlink). It must
+    # point at the app UI, never at a storage bucket; the link lands on an authenticated SPA
+    # route, so no public/signed file URL is ever emitted. Override per environment.
+    app_base_url: str = "http://localhost:5173"
+
     # --- Feature flags ---
     llm_adapter_enabled: bool = False  # AI is advisory-only and off by default
 

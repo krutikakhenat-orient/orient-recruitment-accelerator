@@ -27,7 +27,9 @@ Audience: Recruiters and Recruiter Admins.
    Panel** tab as the auto-progressed ones. Assign **slots** (capacity-limited) as needed.
    From there the **Interview Panel** takes over: panel members confirm **attendance** and
    capture structured **assessments** from their own "My Assigned Interviews" dashboard.
-   The recruiter who scheduled the interview does not mark attendance.
+   The recruiter who scheduled the interview does not mark attendance. Panel members only
+   see candidates for the jobs (and stages) they have been **assigned** to — assign them on
+   the campaign's **Interviews** tab (Recruiter Admin) or via System Administration.
 10. **Make the hiring decision** (select/reject/hold/withdraw). Candidate communications
     never expose internal scores or reviewer notes.
 11. **Waitlist** candidates with a reason; **re-evaluate** only under permitted triggers —
@@ -69,7 +71,7 @@ There are three operational roles plus governance/public roles. See
 |---|---|---|
 | Recruiter | synthetic.recruiter@example.com | Author JD/rules, **run screening**, review applications, schedule interviews. Authoring side of four-eyes. |
 | Recruiter Admin | synthetic.recruiter_admin@example.com | Everything the Recruiter does **plus** all approvals/sign-off: **approve** JD, rules, thresholds, interviews, and final hiring decisions, and audited PII reveal. (Absorbed the former HR Head and Hiring Manager roles.) Does **not** hold system administration. |
-| Interview Panel | synthetic.interview_panel@example.com | Confirm interview **attendance** and submit structured assessments for the candidates they interview. |
+| Interview Panel | synthetic.interview_panel@example.com | Confirm interview **attendance** and submit structured assessments for the candidates they interview — limited to the jobs/stages they are **assigned** to. |
 | Management Viewer | synthetic.management_viewer@example.com | Aggregated dashboards only; no candidate PII. |
 | Audit Viewer | synthetic.audit_viewer@example.com | Read-only audit log. |
 | System Admin | synthetic.system_admin@example.com | Manage staff user accounts. No automatic campaign/candidate access. |
@@ -104,8 +106,37 @@ Open a campaign from the **Campaigns** list. The tabs are:
   candidate's **Resume Score** (scorecard) to inspect the evidence, or click **View form**
   to see exactly what the candidate submitted on the application form. **Run screening** per
   application; re-running creates a new immutable result and never overwrites the previous
-  one. The table columns are: Rank · Applicant · Resume Score · Application form · Review
-  status · actions.
+  one. Each row also has a **⤓ Resume** button to **download that candidate's original
+  résumé** (served securely; requires `candidate.view` + campaign assignment; shows
+  *Resume unavailable* when there is no file).
+  The card header has two report actions:
+  - **👁 Preview Excel** opens the campaign report **inside the app** — a searchable,
+    scrollable table with a **Candidates** sheet and a **Summary** sheet. You can read and
+    filter candidates without opening Microsoft Excel, then click **⤓ Download Excel** to
+    save the real `.xlsx`. The preview and the download show the **same** records.
+  - **⤓ Export to Excel** downloads the same HR workbook directly.
+
+  The workbook has **two** HR-focused sheets. **Candidates** lists, per candidate: Rank,
+  Candidate name, Email address, Contact number, Applied position, Application status,
+  **Overall score (%)**, **JD skills match (%)**, Relevant skills & experience, Key
+  strengths, Missing / unverified requirements, a **Download Resume** link and a **View
+  summary** link. **Summary** holds campaign facts and a score legend. Overall score is the
+  saved deterministic fit score; JD skills match is derived from the job description's skill
+  criteria (shown only when such criteria exist) — they are different numbers. Nothing is
+  rescored or changed. Email/phone are **masked** unless you hold the elevated
+  `candidate.view_pii` permission, in which case the real values appear and each access is
+  logged. The on-screen table columns are: Rank · Applicant · Resume Score · Application
+  form · Review status · actions.
+- **Candidate summary** — clicking **View summary** (in the preview, in the Excel workbook,
+  or via the report) opens a per-candidate dashboard inside ORA: overall fit score and JD
+  skills match, confirmed strengths/skills, missing mandatory requirements and items needing
+  human verification, a per-criterion score breakdown, the applied position and status, and
+  (with `candidate.view_pii`) an audited contact reveal plus an original-resume download. AI
+  /screening output here supports a human decision and never auto-decides hiring.
+- **Interviews** — alongside scheduling, Recruiter Admins see an **Interviewer assignments**
+  card to assign interview-panel members to this job (optionally scoped to a stage) and
+  remove them. An interviewer only ever sees the candidates for jobs/stages they are
+  assigned to; this is enforced server-side, not just hidden in the UI.
 
 Buttons you cannot use are disabled with a short reason (e.g. "needs the Recruiter role" or
 "you're not assigned to this campaign"), so you always know why.

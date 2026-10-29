@@ -463,9 +463,17 @@ def test_eligible_candidate_auto_progresses_to_interview_panel(db_session) -> No
     db_session.refresh(app)
     assert app.state == ApplicationState.INTERVIEW_SCHEDULED.value
     assert _invitation_count(db_session, app) == 1
-    # It shows up on the existing panel worklist. A freshly-scheduled candidate is awaiting
-    # check-in in the interview-day flow (Scheduled -> Checked In -> Assessed -> Checked Out).
-    worklist = panel_worklist(db_session, org.id)
+    # It shows up on the panel worklist of an interviewer ASSIGNED to this campaign (the
+    # worklist is now scoped to the authenticated interviewer's active assignments).
+    from app.modules.interviews.models import InterviewAssignment
+
+    interviewer_id = uuid.uuid4()
+    db_session.add(InterviewAssignment(
+        organisation_id=org.id, campaign_id=campaign.id, stage_id=None,
+        interviewer_id=interviewer_id, assigned_by=uuid.uuid4(), is_active=True,
+    ))
+    db_session.flush()
+    worklist = panel_worklist(db_session, org.id, interviewer_id)
     assert any(
         row["application_id"] == app.id and row["stage"] == "to_check_in" for row in worklist
     )

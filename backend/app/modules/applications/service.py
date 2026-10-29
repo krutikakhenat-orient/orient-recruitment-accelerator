@@ -615,10 +615,14 @@ def authorize_candidate_context_read(
     ):
         return
 
-    # Path 2: panel member actively interviewing THIS candidate.
+    # Path 2: panel member actively interviewing THIS candidate, AND assigned to its
+    # campaign/stage (object-level interviewer isolation).
     if has_permission(actor, Permission.ASSESSMENT_SUBMIT) and (
         assessment_service.panel_member_may_view_candidate(
-            db, organisation_id=application.organisation_id, application=application
+            db,
+            organisation_id=application.organisation_id,
+            interviewer_id=actor.user_id,
+            application=application,
         )
     ):
         return

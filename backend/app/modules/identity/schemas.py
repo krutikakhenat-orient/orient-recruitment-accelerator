@@ -39,6 +39,10 @@ class UserRead(BaseModel):
     display_name: str
     is_active: bool
     mfa_enabled: bool
+    # The user's assigned role names (e.g. "interview_panel"). Lets admin/approver pickers
+    # filter by role — e.g. the interviewer-assignment dropdown shows only panel members.
+    # Non-sensitive metadata only; no password material or candidate data is exposed.
+    role_names: list[str] = Field(default_factory=list)
 
 
 class AuthenticatedActor(BaseModel):

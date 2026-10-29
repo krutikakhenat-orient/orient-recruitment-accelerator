@@ -439,6 +439,17 @@ def test_rescore_progresses_high_scorers_to_panel_and_leaves_low_in_queue(db_ses
     assert high.state == ApplicationState.INTERVIEW_SCHEDULED.value
     assert low.state != ApplicationState.INTERVIEW_SCHEDULED.value
 
-    worklist_ids = {w["application_id"] for w in panel_worklist(db_session, org.id)}
+    from app.modules.interviews.models import InterviewAssignment
+
+    interviewer_id = uuid.uuid4()
+    db_session.add(InterviewAssignment(
+        organisation_id=org.id, campaign_id=campaign.id, stage_id=None,
+        interviewer_id=interviewer_id, assigned_by=uuid.uuid4(), is_active=True,
+    ))
+    db_session.flush()
+    worklist_ids = {
+        w["application_id"]
+        for w in panel_worklist(db_session, org.id, interviewer_id)
+    }
     assert high.id in worklist_ids
     assert low.id not in worklist_ids

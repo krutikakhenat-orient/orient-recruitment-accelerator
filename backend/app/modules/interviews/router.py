@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_actor
@@ -12,15 +13,25 @@ from app.core.errors import NotFoundError
 from app.db.session import get_db
 from app.modules.applications import service as application_service
 from app.modules.applications.models import Application
+from app.modules.identity.models import User
 from app.modules.identity.permissions import Permission
-from app.modules.identity.policy import require_campaign_permission, require_permission
+from app.modules.identity.policy import (
+    require_assignment_management,
+    require_campaign_permission,
+    require_permission,
+)
 from app.modules.identity.schemas import AuthenticatedActor
-from app.modules.interviews import service
+from app.modules.interviews import assignment_service, service
 from app.modules.interviews.models import InterviewSlot, InterviewStage
 from app.modules.interviews.schemas import (
+    AssignmentCreate,
+    AssignmentOverviewRead,
+    AssignmentRead,
+    AssignmentUpdate,
     AttendanceRequest,
     InvitationApprove,
     InvitationRead,
+    MyAssignmentRead,
     SlotAssign,
     SlotCreate,
     SlotRead,
@@ -29,6 +40,204 @@ from app.modules.interviews.schemas import (
 )
 
 router = APIRouter(prefix="/api/v1/interviews", tags=["interviews"])
+
+
+def _assignment_read(db: Session, assignment: object) -> AssignmentRead:
+    """Serialise an InterviewAssignment to its metadata DTO, resolving the interviewer's
+    display name. No candidate data is read or returned."""
+    from app.modules.interviews.models import InterviewAssignment
+
+    assert isinstance(assignment, InterviewAssignment)
+    interviewer = db.get(User, assignment.interviewer_id)
+    data = AssignmentRead.model_validate(assignment)
+    if interviewer is not None:
+        data = data.model_copy(update={"interviewer_name": interviewer.display_name})
+    return data
+
+
+@router.get(
+    "/campaigns/{campaign_id}/assignments", response_model=list[AssignmentRead]
+)
+def list_campaign_assignments(
+    campaign_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> list[AssignmentRead]:
+    """List active interviewer assignments for a campaign (assignment metadata only — no
+    candidate profiles, resumes, or scorecards). Requires interview.assign + management
+    authorisation for this campaign."""
+    require_assignment_management(actor, campaign_id)
+    rows = assignment_service.list_assignments(
+        db, organisation_id=actor.organisation_id, campaign_id=campaign_id
+    )
+    return [_assignment_read(db, a) for a in rows]
+
+
+@router.post(
+    "/campaigns/{campaign_id}/assignments", response_model=AssignmentRead, status_code=201
+)
+def create_campaign_assignment(
+    campaign_id: uuid.UUID,
+    payload: AssignmentCreate,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> AssignmentRead:
+    """Assign an interviewer to a campaign and optional stage. Idempotent (reactivates an
+    existing inactive assignment rather than duplicating). Requires interview.assign +
+    management authorisation for this campaign. The organisation and assigner are derived
+    from the session, never the client."""
+    require_assignment_management(actor, campaign_id)
+    assignment = assignment_service.create_assignment(
+        db,
+        organisation_id=actor.organisation_id,
+        campaign_id=campaign_id,
+        interviewer_id=payload.interviewer_id,
+        stage_id=payload.stage_id,
+        assigned_by=actor.user_id,
+    )
+    return _assignment_read(db, assignment)
+
+
+@router.patch("/assignments/{assignment_id}", response_model=AssignmentRead)
+def update_campaign_assignment(
+    assignment_id: uuid.UUID,
+    payload: AssignmentUpdate,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> AssignmentRead:
+    """Change an assignment's stage scope. Requires interview.assign + management
+    authorisation for the assignment's campaign."""
+    assignment = assignment_service.get_assignment(
+        db, organisation_id=actor.organisation_id, assignment_id=assignment_id
+    )
+    require_assignment_management(actor, assignment.campaign_id)
+    updated = assignment_service.update_assignment_stage(
+        db,
+        organisation_id=actor.organisation_id,
+        assignment_id=assignment_id,
+        stage_id=payload.stage_id,
+        actor_id=actor.user_id,
+    )
+    return _assignment_read(db, updated)
+
+
+@router.delete("/assignments/{assignment_id}", status_code=204)
+def remove_campaign_assignment(
+    assignment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> Response:
+    """Soft-deactivate an assignment (preserves history and submitted assessments).
+    Requires interview.assign + management authorisation for the assignment's campaign."""
+    assignment = assignment_service.get_assignment(
+        db, organisation_id=actor.organisation_id, assignment_id=assignment_id
+    )
+    require_assignment_management(actor, assignment.campaign_id)
+    assignment_service.deactivate_assignment(
+        db,
+        organisation_id=actor.organisation_id,
+        assignment_id=assignment_id,
+        actor_id=actor.user_id,
+    )
+    return Response(status_code=204)
+
+
+@router.get("/my-assignments", response_model=list[MyAssignmentRead])
+def my_assignments(
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> list[MyAssignmentRead]:
+    """The authenticated interviewer's own active assignments, as campaign buckets (keyed by
+    campaign UUID). Requires assessment.submit. Drives the panel's campaign-bucket list."""
+    require_permission(actor, Permission.ASSESSMENT_SUBMIT)
+    rows = assignment_service.active_assignments_for_interviewer(
+        db, organisation_id=actor.organisation_id, interviewer_id=actor.user_id
+    )
+    from app.modules.campaigns.models import Campaign
+
+    out: list[MyAssignmentRead] = []
+    for a in rows:
+        campaign = db.get(Campaign, a.campaign_id)
+        campaign_label = (
+            (campaign.position_title or campaign.name) if campaign is not None
+            else str(a.campaign_id)
+        )
+        stage_name: str | None = None
+        if a.stage_id is not None:
+            stage = db.get(InterviewStage, a.stage_id)
+            stage_name = stage.name if stage is not None else None
+        out.append(
+            MyAssignmentRead(
+                campaign_id=a.campaign_id,
+                campaign_name=campaign_label,
+                stage_id=a.stage_id,
+                stage_name=stage_name,
+            )
+        )
+    return out
+
+
+@router.get("/assignments", response_model=list[AssignmentOverviewRead])
+def list_all_assignments(
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> list[AssignmentOverviewRead]:
+    """Organisation-wide interviewer-assignment overview for administration (the System
+    Admin "assigned users" view). Requires `interview.assign`. Returns ONLY assignment +
+    user/campaign/stage metadata — never candidate profiles, resumes, contact details,
+    scores, rankings, or assessments. Includes inactive assignments so status is visible.
+    """
+    require_permission(actor, Permission.INTERVIEW_ASSIGN)
+
+    from app.modules.campaigns.models import Campaign
+
+    rows = assignment_service.list_all_assignments(
+        db, organisation_id=actor.organisation_id, include_inactive=True
+    )
+    # Resolve display labels with small per-id caches (no candidate data is touched).
+    campaign_cache: dict[uuid.UUID, Campaign | None] = {}
+    stage_cache: dict[uuid.UUID, InterviewStage | None] = {}
+    user_cache: dict[uuid.UUID, User | None] = {}
+
+    def _campaign(cid: uuid.UUID) -> Campaign | None:
+        if cid not in campaign_cache:
+            campaign_cache[cid] = db.get(Campaign, cid)
+        return campaign_cache[cid]
+
+    def _stage(sid: uuid.UUID) -> InterviewStage | None:
+        if sid not in stage_cache:
+            stage_cache[sid] = db.get(InterviewStage, sid)
+        return stage_cache[sid]
+
+    def _user(uid: uuid.UUID) -> User | None:
+        if uid not in user_cache:
+            user_cache[uid] = db.get(User, uid)
+        return user_cache[uid]
+
+    out: list[AssignmentOverviewRead] = []
+    for a in rows:
+        campaign = _campaign(a.campaign_id)
+        interviewer = _user(a.interviewer_id)
+        stage = _stage(a.stage_id) if a.stage_id is not None else None
+        out.append(
+            AssignmentOverviewRead(
+                id=a.id,
+                interviewer_id=a.interviewer_id,
+                interviewer_name=interviewer.display_name if interviewer else None,
+                interviewer_email=interviewer.email if interviewer else None,
+                interviewer_role_names=sorted(
+                    {ur.role.name for ur in interviewer.roles if ur.role is not None}
+                ) if interviewer else [],
+                campaign_id=a.campaign_id,
+                campaign_name=(
+                    (campaign.position_title or campaign.name) if campaign else None
+                ),
+                stage_id=a.stage_id,
+                stage_name=stage.name if stage else None,
+                is_active=a.is_active,
+            )
+        )
+    return out
 
 
 @router.get("/stages", response_model=list[StageRead])

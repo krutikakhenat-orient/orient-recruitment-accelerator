@@ -459,3 +459,81 @@ def configure_governance(
         campaign.approved_rule_set_version_id = approved_rule_set_version_id
     campaign.updated_by = actor_id
     db.flush()
+
+
+# --- Closure readiness ----------------------------------------------------------------
+#
+# Before an authoriser marks a campaign COMPLETED (hiring finished) or CANCELLED (hiring
+# abandoned), HR should be warned if work is still in flight: candidates mid-pipeline or
+# interviews not yet concluded (Req 3: "warn HR if candidates or interviews are still
+# pending"). This is ADVISORY ONLY — it never blocks the transition; the TransitionService
+# remains the single authority on what moves are permitted. It is a pure read: no state is
+# mutated and no records are touched.
+
+# Application disposition states that are terminal for a campaign's purposes: the candidate
+# has a final outcome (or withdrew), so they are NOT "pending". Everything else is pending
+# work a closer should know about. Values mirror ApplicationState; kept as a literal set so
+# this read does not depend on the applications module's internals.
+_FINAL_APPLICATION_STATES: frozenset[str] = frozenset(
+    {"selected", "rejected", "withdrawn"}
+)
+
+# Interview attendance values that mean the interview is concluded. Anything else
+# (pending / checked_in) is an interview still in progress. Mirrors AttendanceStatus.
+_CONCLUDED_ATTENDANCE: frozenset[str] = frozenset(
+    {"checked_out", "attended", "no_show"}
+)
+
+
+class ClosureReadiness:
+    """Advisory counts of in-flight work for a campaign about to be closed/cancelled."""
+
+    __slots__ = ("pending_applications", "pending_interviews")
+
+    def __init__(self, pending_applications: int, pending_interviews: int) -> None:
+        self.pending_applications = pending_applications
+        self.pending_interviews = pending_interviews
+
+    @property
+    def has_pending(self) -> bool:
+        return self.pending_applications > 0 or self.pending_interviews > 0
+
+
+def closure_readiness(
+    db: Session, *, organisation_id: uuid.UUID, campaign_id: uuid.UUID
+) -> ClosureReadiness:
+    """Count candidates and interviews still in progress for a campaign (advisory).
+
+    Read-only. Used by the UI to warn before final closure; it does not gate the transition.
+    Scoped by organisation and campaign (object-level authorisation is enforced on the route
+    before this is called).
+    """
+    from sqlalchemy import func
+
+    from app.modules.applications.models import Application
+    from app.modules.interviews.models import InterviewInvitation
+
+    pending_apps = db.execute(
+        select(func.count())
+        .select_from(Application)
+        .where(
+            Application.organisation_id == organisation_id,
+            Application.campaign_id == campaign_id,
+            Application.state.notin_(_FINAL_APPLICATION_STATES),
+        )
+    ).scalar_one()
+
+    pending_interviews = db.execute(
+        select(func.count())
+        .select_from(InterviewInvitation)
+        .where(
+            InterviewInvitation.organisation_id == organisation_id,
+            InterviewInvitation.campaign_id == campaign_id,
+            InterviewInvitation.attendance.notin_(_CONCLUDED_ATTENDANCE),
+        )
+    ).scalar_one()
+
+    return ClosureReadiness(
+        pending_applications=int(pending_apps),
+        pending_interviews=int(pending_interviews),
+    )

@@ -32,6 +32,19 @@ _DECISION_TO_STATE = {
     DecisionType.WITHDRAW: ApplicationState.WITHDRAWN,
 }
 
+# States from which a candidate is ready for a select/reject/hold hiring decision. The
+# interview-day lifecycle is Check In -> ASSESSED -> Check Out -> CHECKED_OUT, and the
+# application state machine permits a decision from BOTH terminal interview states
+# (states.py: "the decision transitions accept either terminal interview state"). The
+# Hiring Decisions inbox and the decision guard must therefore accept both, otherwise a
+# checked-out candidate silently disappears from the inbox. ASSESSED is retained for the
+# legacy path (interviews recorded before the check-in/out flow) and for a candidate who is
+# assessed but not yet checked out.
+_DECISION_READY_STATES = {
+    ApplicationState.ASSESSED.value,
+    ApplicationState.CHECKED_OUT.value,
+}
+
 
 def list_pending_decisions(
     db: Session,
@@ -54,7 +67,7 @@ def list_pending_decisions(
         select(Application)
         .where(
             Application.organisation_id == organisation_id,
-            Application.state == ApplicationState.ASSESSED.value,
+            Application.state.in_(_DECISION_READY_STATES),
         )
         .order_by(Application.created_at.desc())
     )
@@ -142,13 +155,16 @@ def record_decision(
         raise ValidationError("A reason is required for a hiring decision")
 
     destination = _DECISION_TO_STATE[decision_type]
-    # Select/reject are only valid after assessment; hold likewise. Withdraw is broad and
-    # handled by the transition table's own guards.
+    # Select/reject/hold are valid once the interview is concluded — either ASSESSED (legacy
+    # path, or assessed-not-yet-checked-out) or CHECKED_OUT (current check-in/out flow).
+    # Withdraw is broad and handled by the transition table's own guards.
     if (
         decision_type in {DecisionType.SELECT, DecisionType.REJECT, DecisionType.HOLD}
-        and application.state != ApplicationState.ASSESSED.value
+        and application.state not in _DECISION_READY_STATES
     ):
-        raise ConflictError("Select/reject/hold decisions require an assessed application")
+        raise ConflictError(
+            "Select/reject/hold decisions require an assessed or checked-out application"
+        )
 
     decision = HiringDecision(
         organisation_id=application.organisation_id,

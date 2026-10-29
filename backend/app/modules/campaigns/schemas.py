@@ -32,6 +32,18 @@ class CampaignAssignRequest(BaseModel):
     email: str | None = Field(default=None, max_length=320)
 
 
+class ClosureReadinessRead(BaseModel):
+    """Advisory counts of in-flight work before a campaign is completed/cancelled.
+
+    ``has_pending`` is True when either count is non-zero; the UI uses it to warn HR before
+    final closure. These counts never block a transition.
+    """
+
+    pending_applications: int
+    pending_interviews: int
+    has_pending: bool
+
+
 class CampaignRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

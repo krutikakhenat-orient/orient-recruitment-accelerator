@@ -44,3 +44,23 @@ def require_campaign_permission(
     """Combined check: hold the permission AND be assigned to the campaign."""
     require_permission(actor, permission)
     require_campaign_access(actor, campaign_id)
+
+
+def require_assignment_management(
+    actor: AuthenticatedActor, campaign_id: uuid.UUID
+) -> None:
+    """Authorise managing interviewer assignments for a campaign.
+
+    Requires ``interview.assign`` AND one of:
+      * organisation-wide admin scope (``system.configure`` — the System Admin, who manages
+        assignments across the org but holds NO candidate-content permission), OR
+      * campaign assignment (the Recruiter Admin, scoped to campaigns it manages).
+
+    This keeps System Admin's reach to assignment metadata only (it never gains
+    candidate.view and is never granted campaign-content access by this check), while a
+    Recruiter Admin can only manage the panels of campaigns it is actually assigned to.
+    """
+    require_permission(actor, Permission.INTERVIEW_ASSIGN)
+    if has_permission(actor, Permission.SYSTEM_CONFIGURE):
+        return  # org-wide admin scope (System Admin)
+    require_campaign_access(actor, campaign_id)
