@@ -100,8 +100,12 @@ describe("downloadResume (resume download helper)", () => {
     const result = await downloadResume("application-text", "test-token-123");
     expect(result).not.toBeNull();
     expect(result?.contentType).toContain("text/plain");
-    // jsdom's Blob does not implement .text(); assert the returned blob's type/size instead.
-    expect(result?.blob).toBeInstanceOf(Blob);
+    // Assert the returned blob by its stable shape (size/type), NOT `toBeInstanceOf(Blob)`.
+    // Under Node 22+ runners the global `Blob` (node:buffer) differs from the `Blob` realm
+    // that `Response#blob()` returns in jsdom, so an identity check is flaky across Node
+    // versions. Duck-typing on the observable properties is correct and version-stable.
+    expect(result?.blob).toBeDefined();
+    expect(typeof result?.blob.size).toBe("number");
     expect(result?.blob.size).toBeGreaterThan(0);
     expect(result?.blob.type).toContain("text/plain");
   });
