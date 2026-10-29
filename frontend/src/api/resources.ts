@@ -1010,3 +1010,81 @@ export const getPublicApplicationStatus = (
   publicGet<PublicApplicationStatus>(
     `/api/v1/public/applications/${applicationId}/status`,
   );
+
+// ---------- Induction (employee onboarding) ----------
+// The employee dashboard's two features: watch the developer-provisioned induction video,
+// then obtain the completion certificate. Endpoint shapes mirror the backend (FEAT-001):
+// completed/completed_at gate the certificate; the video stream + certificate are served as
+// authenticated bytes, so they are fetched with the in-memory bearer token (never a bare
+// <video src>, which cannot send the Authorization header) — same approach as downloadResume.
+export const inductionStatus = z
+  .object({
+    has_video: z.boolean(),
+    completed: z.boolean(),
+    completed_at: z.string().nullable(),
+  })
+  .passthrough();
+export type InductionStatus = z.infer<typeof inductionStatus>;
+// Any authenticated actor may read their own status (an employee without a seeded video gets
+// has_video=false); used to gate the dashboard and unlock the certificate.
+export const getInductionStatus = () => apiFetch("/api/v1/induction/me", inductionStatus);
+
+export const inductionVideoMeta = z
+  .object({
+    id: uuid,
+    title: z.string(),
+    description: z.string().nullable(),
+    content_type: z.string(),
+  })
+  .passthrough();
+export type InductionVideoMeta = z.infer<typeof inductionVideoMeta>;
+export const getInductionVideoMeta = () =>
+  apiFetch("/api/v1/induction/video", inductionVideoMeta);
+
+export const inductionCompletion = z
+  .object({ completed: z.boolean(), completed_at: z.string() })
+  .passthrough();
+export type InductionCompletion = z.infer<typeof inductionCompletion>;
+// Idempotent server-side: a second call returns the same completed_at. Emits an audit event.
+export const markInductionComplete = () =>
+  apiFetch("/api/v1/induction/complete", inductionCompletion, { method: "POST" });
+
+// Fetch the induction video as a Blob using the bearer token so it can be played via an
+// object URL (tokens are in-memory only, so a plain <video src> cannot authenticate). Mirrors
+// downloadResume. Content-Type comes from the response (the stored video's media type).
+export async function fetchInductionVideoBlob(
+  token: string,
+): Promise<{ blob: Blob; contentType: string }> {
+  const resp = await fetch("/api/v1/induction/video/stream", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) {
+    const body: unknown = await resp.json().catch(() => null);
+    const msg =
+      body && typeof body === "object" && "error" in body
+        ? (body as { error: { message: string } }).error.message
+        : `Could not load the induction video (${resp.status})`;
+    throw new Error(msg);
+  }
+  const blob = await resp.blob();
+  return { blob, contentType: resp.headers.get("Content-Type") ?? "video/mp4" };
+}
+
+// Fetch the completion certificate HTML using the bearer token. Only succeeds after a
+// completion exists (the backend returns 4xx otherwise); the UI keeps this action locked
+// until the status reports completed=true. Returns the HTML text so the UI can open it in a
+// new tab for viewing/printing.
+export async function fetchInductionCertificate(token: string): Promise<string> {
+  const resp = await fetch("/api/v1/induction/certificate", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) {
+    const body: unknown = await resp.json().catch(() => null);
+    const msg =
+      body && typeof body === "object" && "error" in body
+        ? (body as { error: { message: string } }).error.message
+        : `Could not load the certificate (${resp.status})`;
+    throw new Error(msg);
+  }
+  return resp.text();
+}
