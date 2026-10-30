@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
@@ -25,6 +25,7 @@ vi.mock("../api/resources", async (importOriginal) => {
     fetchInductionVideoBlob: vi.fn(),
     markInductionComplete: vi.fn(),
     fetchInductionCertificate: vi.fn(),
+    downloadInductionCertificate: vi.fn(),
   };
 });
 
@@ -34,7 +35,27 @@ const mocked = resources as unknown as {
   fetchInductionVideoBlob: Mock;
   markInductionComplete: Mock;
   fetchInductionCertificate: Mock;
+  downloadInductionCertificate: Mock;
 };
+
+/* jsdom's <video> has no real media pipeline (duration is NaN, currentTime is a plain
+   writable field, and no events fire on their own). These helpers simulate genuine,
+   contiguous playback to the end so the full-watch enforcement can be exercised. */
+function setVideoDuration(video: HTMLVideoElement, seconds: number): void {
+  Object.defineProperty(video, "duration", { configurable: true, value: seconds });
+  fireEvent.loadedMetadata(video);
+}
+
+// Simulate contiguous playback in small steps (<= the component's playback-step threshold),
+// firing a timeupdate after each step, exactly as a playing <video> would.
+function playThrough(video: HTMLVideoElement, duration: number, stepSeconds = 1): void {
+  let t = 0;
+  while (t < duration) {
+    t = Math.min(duration, t + stepSeconds);
+    video.currentTime = t;
+    fireEvent.timeUpdate(video);
+  }
+}
 
 const VIDEO_META = {
   id: "video-1",
@@ -72,6 +93,10 @@ describe("EmployeePage induction dashboard", () => {
       contentType: "video/mp4",
     });
     mocked.fetchInductionCertificate.mockResolvedValue("<html><body>Certificate</body></html>");
+    mocked.downloadInductionCertificate.mockResolvedValue({
+      blob: new Blob(["<html><body>Certificate</body></html>"], { type: "text/html" }),
+      filename: "induction-certificate.html",
+    });
   });
 
   afterEach(() => {
@@ -87,13 +112,70 @@ describe("EmployeePage induction dashboard", () => {
 
     renderPage();
 
-    // The Certificate card is present but locked (no view-certificate button yet).
-    expect(await screen.findByText(/your completion certificate unlocks/i)).toBeInTheDocument();
+    // The Certificate card is present but locked: the message tells the user to complete the
+    // induction video first, and there is no view/download action yet.
+    expect(
+      await screen.findByText(/complete the induction video to unlock your certificate/i),
+    ).toBeInTheDocument();
     expect(screen.getByText("Locked")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /view certificate/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /download certificate/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it("unlocks the certificate after completion is recorded and the status refetches", async () => {
+  it("keeps completion disabled until the whole video is watched", async () => {
+    mocked.getInductionStatus.mockResolvedValue({
+      has_video: true,
+      completed: false,
+      completed_at: null,
+    });
+
+    renderPage();
+
+    // The complete button exists but is disabled while nothing (or only part) is watched.
+    const complete = await screen.findByRole("button", {
+      name: /mark induction complete/i,
+    });
+    expect(complete).toBeDisabled();
+    expect(screen.getByText(/watch the full video to unlock/i)).toBeInTheDocument();
+
+    const video = screen.getByLabelText(/induction video/i) as HTMLVideoElement;
+    setVideoDuration(video, 10);
+
+    // Watching only part of the video must NOT unlock completion.
+    playThrough(video, 4);
+    expect(complete).toBeDisabled();
+
+    // Watching the rest contiguously reaches the end and unlocks completion.
+    playThrough(video, 10);
+    await waitFor(() => expect(complete).toBeEnabled());
+  });
+
+  it("snaps a forward seek back so the scrubber cannot shortcut completion", async () => {
+    mocked.getInductionStatus.mockResolvedValue({
+      has_video: true,
+      completed: false,
+      completed_at: null,
+    });
+
+    renderPage();
+
+    const complete = await screen.findByRole("button", {
+      name: /mark induction complete/i,
+    });
+    const video = screen.getByLabelText(/induction video/i) as HTMLVideoElement;
+    setVideoDuration(video, 10);
+
+    // Try to jump straight to the end: the component snaps currentTime back to the watched
+    // marker (0) and completion stays locked.
+    video.currentTime = 10;
+    fireEvent.seeking(video);
+    expect(video.currentTime).toBe(0);
+    expect(complete).toBeDisabled();
+  });
+
+  it("unlocks the certificate after a full watch is recorded and the status refetches", async () => {
     // First status load: not completed. After completion, the refetch returns completed=true.
     mocked.getInductionStatus
       .mockResolvedValueOnce({ has_video: true, completed: false, completed_at: null })
@@ -109,26 +191,34 @@ describe("EmployeePage induction dashboard", () => {
 
     renderPage();
 
-    // Wait for the video to be ready so the confirm button is enabled.
-    const confirm = await screen.findByRole("button", {
-      name: /i have completed the induction/i,
+    const complete = await screen.findByRole("button", {
+      name: /mark induction complete/i,
     });
-    await waitFor(() => expect(confirm).toBeEnabled());
 
     // Certificate starts locked.
     expect(screen.getByText("Locked")).toBeInTheDocument();
 
-    await userEvent.click(confirm);
+    // Watch the whole video, then the complete button enables.
+    const video = screen.getByLabelText(/induction video/i) as HTMLVideoElement;
+    setVideoDuration(video, 10);
+    playThrough(video, 10);
+    await waitFor(() => expect(complete).toBeEnabled());
+
+    await userEvent.click(complete);
 
     // Completion was recorded...
     await waitFor(() => expect(mocked.markInductionComplete).toHaveBeenCalledTimes(1));
 
-    // ...and after the status refetch reports completed=true, the certificate unlocks.
-    expect(await screen.findByRole("button", { name: /view certificate/i })).toBeInTheDocument();
+    // ...and after the status refetch reports completed=true, the certificate unlocks with
+    // both a download and a view action.
+    expect(
+      await screen.findByRole("button", { name: /download certificate/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /view certificate/i })).toBeInTheDocument();
     expect(screen.getByText("Unlocked")).toBeInTheDocument();
 
-    // The view-certificate action fetches the certificate HTML with the token.
-    await userEvent.click(screen.getByRole("button", { name: /view certificate/i }));
-    await waitFor(() => expect(mocked.fetchInductionCertificate).toHaveBeenCalledTimes(1));
+    // The download action fetches the certificate bytes with the token and triggers a save.
+    await userEvent.click(screen.getByRole("button", { name: /download certificate/i }));
+    await waitFor(() => expect(mocked.downloadInductionCertificate).toHaveBeenCalledTimes(1));
   });
 });

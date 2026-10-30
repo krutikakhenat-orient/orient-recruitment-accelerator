@@ -1088,3 +1088,28 @@ export async function fetchInductionCertificate(token: string): Promise<string> 
   }
   return resp.text();
 }
+
+// Fetch the completion certificate as a Blob using the bearer token so the UI can trigger a
+// real browser download to the user's local disk (works after deployment, not just locally).
+// Mirrors downloadResume/downloadCampaignExport: the Authorization header is sent explicitly
+// and the caller creates an <a download> to save the file. Only succeeds after a completion
+// exists (the backend returns 4xx otherwise); the UI keeps this action locked until the
+// status reports completed=true. Returns the HTML bytes plus a filesystem-safe filename.
+export async function downloadInductionCertificate(
+  token: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const resp = await fetch("/api/v1/induction/certificate", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) {
+    const body: unknown = await resp.json().catch(() => null);
+    const msg =
+      body && typeof body === "object" && "error" in body
+        ? (body as { error: { message: string } }).error.message
+        : `Could not load the certificate (${resp.status})`;
+    throw new Error(msg);
+  }
+  const html = await resp.text();
+  const blob = new Blob([html], { type: "text/html" });
+  return { blob, filename: "induction-certificate.html" };
+}
