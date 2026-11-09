@@ -302,6 +302,14 @@ export class AgentCoreStack extends Stack {
         continue;
       }
       env.runtime.addEnvironmentVariable('INTERVIEW_AGENT_S3_BUCKET', resultsBucket.bucketName);
+      // HMAC secret for the result webhook to the HR API. Read from the deploying shell (it must
+      // match the API's ORA_AI_INTERVIEW_WEBHOOK_SECRET, a Terraform output) so it is never
+      // committed in agentcore.json. Fail the synth rather than deploy an agent that cannot sign.
+      const webhookSecret = process.env.INTERVIEW_AGENT_WEBHOOK_SECRET;
+      if (!webhookSecret || webhookSecret.length < 32) {
+        throw new Error('Set INTERVIEW_AGENT_WEBHOOK_SECRET (>= 32 chars) before deploying the interview agent.');
+      }
+      env.runtime.addEnvironmentVariable('INTERVIEW_AGENT_WEBHOOK_SECRET', webhookSecret);
       // Write-only: the agent never needs to read or list other interviews.
       env.runtime.role.addToPrincipalPolicy(
         new iam.PolicyStatement({

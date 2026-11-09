@@ -8,9 +8,9 @@
     "agentcore:project-name": "InterviewAgent",
     "Project": "orient-recruitment-accelerator",
     "Application": "Interview Agent",
-    "Environment": "dev",
+    "Environment": "production",
     "Owner": "sumanpramanik@orientindia.net",
-    "CostCenter": "OTL_GenAi",
+    "CostCenter": "Orient_Internal_AI",
     "ManagedBy": "agentcore-cli"
   },
   "runtimes": [
@@ -27,7 +27,8 @@
       "instrumentation": { "enableOtel": false },
       "lifecycleConfiguration": { "idleRuntimeSessionTimeout": 900, "maxLifetime": 3600 },
       "envVars": [
-        { "name": "INTERVIEW_AGENT_ENVIRONMENT", "value": "dev" },
+        { "name": "INTERVIEW_AGENT_ENVIRONMENT", "value": "prod" },
+        { "name": "INTERVIEW_AGENT_WEBHOOK_URL", "value": "https://2psjcbnlvk.execute-api.ap-south-1.amazonaws.com/api/v1/ai-interviews/webhook" },
         { "name": "INTERVIEW_AGENT_ADAPTERS", "value": "aws" },
         { "name": "INTERVIEW_AGENT_AWS_REGION", "value": "ap-south-1" },
         { "name": "INTERVIEW_AGENT_LLM_MODEL_ID", "value": "openai.gpt-oss-120b-1:0" },

@@ -4,13 +4,13 @@
       "resources": {
         "runtimes": {
           "interview_agent": {
-            "runtimeId": "InterviewAgent_interview_agent-05wWzf6aMK",
-            "runtimeArn": "arn:aws:bedrock-agentcore:ap-south-1:771834037911:runtime/InterviewAgent_interview_agent-05wWzf6aMK",
-            "roleArn": "arn:aws:iam::771834037911:role/AgentCore-InterviewAgent--ApplicationAgentInterview-HWkbTkLLOAgO"
+            "runtimeId": "InterviewAgent_interview_agent-27ewSV3kTB",
+            "runtimeArn": "arn:aws:bedrock-agentcore:ap-south-1:917511768830:runtime/InterviewAgent_interview_agent-27ewSV3kTB",
+            "roleArn": "arn:aws:iam::917511768830:role/AgentCore-InterviewAgent--ApplicationAgentInterview-Oha7TWAk487g"
           }
         },
         "stackName": "AgentCore-InterviewAgent-default",
-        "deployHash": "a409316dec8c9eb7"
+        "deployHash": "5f95cf623201ba9e"
       }
     }
   }

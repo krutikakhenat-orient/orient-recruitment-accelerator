@@ -8,6 +8,11 @@ output "files_bucket" { value = aws_s3_bucket.files.bucket }
 output "db_cluster_arn" { value = aws_rds_cluster.main.arn }
 output "db_secret_arn" { value = aws_secretsmanager_secret.db.arn }
 output "ai_interview_enabled" { value = local.ai_on }
+# Shared HMAC secret: the agent signs result webhooks with it, the API verifies them.
+output "webhook_secret" {
+  value     = random_password.webhook.result
+  sensitive = true
+}
 output "seed_password" {
   value     = local.seed_pwd
   sensitive = true

@@ -37,15 +37,16 @@ variable "db_max_acu" {
 }
 
 variable "app_base_url" {
-  description = "Public Amplify URL. Leave empty on the first apply, set it on the second (avoids a Terraform dependency cycle)."
+  description = "Public Amplify URL (used for CORS and links). Known after the first apply."
   type        = string
-  default     = ""
+  default     = "https://main.d34zadd4sik8o2.amplifyapp.com"
 }
 
 variable "agentcore_runtime_arn" {
-  description = "ARN of the AgentCore interview runtime (deployed with the agentcore CLI). Empty keeps the AI interview feature off."
+  description = "ARN of the AgentCore interview runtime (deployed with the agentcore CLI, scripts/deploy-agent.ps1). Empty turns the AI interview feature off."
   type        = string
-  default     = ""
+  # Set as the default so a plain `terraform apply` keeps the feature on.
+  default = "arn:aws:bedrock-agentcore:ap-south-1:917511768830:runtime/InterviewAgent_interview_agent-27ewSV3kTB"
 }
 
 variable "seed_password" {

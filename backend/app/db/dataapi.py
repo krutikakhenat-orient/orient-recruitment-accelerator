@@ -7,10 +7,16 @@ fail and bulk INSERT ... RETURNING sentinel matching raises "Can't match sentine
 
 This module registers a subclass of the upstream dialect, under the same URL name, whose generic
 ``Uuid`` type binds values as text cast to ``uuid`` and converts results back to ``uuid.UUID``.
+
+It also retries Data API calls while an auto-paused Aurora cluster resumes
+(``DatabaseResumingException``, typically 15-30 s), so the first request after an idle period
+waits instead of failing with a 500.
 """
 
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from typing import Any
 
@@ -19,6 +25,36 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import sqltypes
 
 _REGISTERED = False
+_log = logging.getLogger(__name__)
+
+# Total wait budget stays under the API Gateway 29 s integration timeout.
+_RESUME_DELAYS_SECONDS = (1.0, 2.0, 3.0, 4.0, 5.0, 5.0, 5.0)
+
+
+class _ResumeRetryingClient:
+    """Proxy for a boto3 ``rds-data`` client that retries while Aurora resumes from pause."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._client, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            for delay in (*_RESUME_DELAYS_SECONDS, None):
+                try:
+                    return attr(*args, **kwargs)
+                except Exception as exc:
+                    code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+                    if code != "DatabaseResumingException" or delay is None:
+                        raise
+                    _log.info("database resuming from auto-pause; retrying in %.0fs", delay)
+                    time.sleep(delay)
+            raise AssertionError("unreachable")
+
+        return call
 
 
 class _DataApiUuid(sqltypes.Uuid):  # type: ignore[type-arg]
@@ -61,6 +97,12 @@ def register_dataapi_dialect() -> None:
             AuroraPostgresDataAPIDialect.colspecs, {sqltypes.Uuid: _DataApiUuid}
         )
         supports_statement_cache = True
+
+        def connect(self, *cargs: Any, **cparams: Any) -> Any:
+            conn = super().connect(*cargs, **cparams)
+            # aurora_data_api keeps its boto3 rds-data client on ``_client``.
+            conn._client = _ResumeRetryingClient(conn._client)
+            return conn
 
     globals()["OraAuroraPostgresDataAPIDialect"] = OraAuroraPostgresDataAPIDialect
     registry.register("postgresql.auroradataapi", __name__, "OraAuroraPostgresDataAPIDialect")
