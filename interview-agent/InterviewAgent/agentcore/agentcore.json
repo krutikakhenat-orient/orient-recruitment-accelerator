@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
+  "name": "InterviewAgent",
+  "version": 1,
+  "managedBy": "CDK",
+  "tags": {
+    "agentcore:created-by": "agentcore-cli",
+    "agentcore:project-name": "InterviewAgent",
+    "Project": "orient-recruitment-accelerator",
+    "Application": "Interview Agent",
+    "Environment": "dev",
+    "Owner": "sumanpramanik@orientindia.net",
+    "CostCenter": "OTL_GenAi",
+    "ManagedBy": "agentcore-cli"
+  },
+  "runtimes": [
+    {
+      "name": "interview_agent",
+      "description": "Voice interview agent: Transcribe + gpt-oss-120b + Polly. Advisory output only.",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "../src",
+      "runtimeVersion": "PYTHON_3_12",
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP",
+      "authorizerType": "AWS_IAM",
+      "instrumentation": { "enableOtel": false },
+      "lifecycleConfiguration": { "idleRuntimeSessionTimeout": 900, "maxLifetime": 3600 },
+      "envVars": [
+        { "name": "INTERVIEW_AGENT_ENVIRONMENT", "value": "dev" },
+        { "name": "INTERVIEW_AGENT_ADAPTERS", "value": "aws" },
+        { "name": "INTERVIEW_AGENT_AWS_REGION", "value": "ap-south-1" },
+        { "name": "INTERVIEW_AGENT_LLM_MODEL_ID", "value": "openai.gpt-oss-120b-1:0" },
+        { "name": "INTERVIEW_AGENT_LLM_REASONING_EFFORT", "value": "low" },
+        { "name": "INTERVIEW_AGENT_TRANSCRIBE_LANGUAGE", "value": "en-IN" },
+        { "name": "INTERVIEW_AGENT_POLLY_VOICE_ID", "value": "Arjun" },
+        { "name": "INTERVIEW_AGENT_POLLY_LANGUAGE_CODE", "value": "en-IN" },
+        { "name": "INTERVIEW_AGENT_POLLY_ENGINE", "value": "generative" },
+        { "name": "INTERVIEW_AGENT_POLLY_REGION", "value": "us-east-1" },
+        { "name": "INTERVIEW_AGENT_MAX_INTERVIEW_SECONDS", "value": "1800" },
+        { "name": "INTERVIEW_AGENT_ALLOW_TEXT_INPUT", "value": "true" },
+        { "name": "INTERVIEW_AGENT_S3_PREFIX", "value": "interviews/" }
+      ]
+    }
+  ],
+  "memories": [],
+  "knowledgeBases": [],
+  "credentials": [],
+  "evaluators": [],
+  "onlineEvalConfigs": [],
+  "agentCoreGateways": [],
+  "policyEngines": [],
+  "configBundles": [],
+  "abTests": [],
+  "harnesses": [],
+  "datasets": [],
+  "capacityProviders": [],
+  "payments": []
+}

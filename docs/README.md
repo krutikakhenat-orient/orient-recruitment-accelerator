@@ -387,6 +387,10 @@ checklists before any real-world use.
 | [privacy-checklist.md](privacy-checklist.md)         | Privacy/retention checks                    |
 | [deployment.md](deployment.md)                       | Production deployment                       |
 | [backup-restore.md](backup-restore.md)               | Backup & restore procedures                 |
+| [USER_GUIDE.md](USER_GUIDE.md)                       | Plain-language user guide (also in the app at `/guide`) |
+| [BRD.md](BRD.md)                                     | Business Requirements Document (long-term plan: functional + non-functional requirements) |
+| [requirements.md](../.kiro/specs/recruitment-platform/requirements.md) | MVP requirements 1–16 and acceptance gate |
+| [requirements-long-term.md](../.kiro/specs/recruitment-platform/requirements-long-term.md) | Long-term requirements 17–35 (recruitment and onboarding automation) |
 | [open-decisions.md](open-decisions.md)               | Known open questions / deferred decisions   |
 | [adr/](adr/)                                         | Architecture Decision Records               |
 

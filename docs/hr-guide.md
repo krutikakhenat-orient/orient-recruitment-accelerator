@@ -86,23 +86,37 @@ Two platform rules shape what you can do:
   creator (four-eyes). So opening a campaign normally spans more than one account.
 - **Object-level assignment** — holding a permission is not enough; you must also be
   **assigned to the specific campaign**. The creator is auto-assigned. Others use the
-  **Team access** card on the campaign Overview tab (**Assign me**, or assign a colleague
-  by email).
+  **Team access** card on the campaign's **Settings** tab (**Assign me**, or assign a
+  colleague by email).
+
+## From a new campaign to a live apply link
+
+After you create a campaign, open it. While it is being set up it opens on **1 · Setup**,
+which starts with a **Set up this job** checklist. The highlighted step is always the next
+thing to do, and each step says who does it:
+
+1. **Upload the job description** (Recruiter).
+2. **Check and approve the job description** (Recruiter Admin). Approving also creates the
+   screening criteria and the default 50% threshold automatically.
+3. **Screening criteria ready** (automatic).
+4. **Create and approve the application form** (Recruiter).
+5. **Open for applications** (Recruiter Admin). One button. It checks that everything above
+   is approved, attaches the organisation's privacy notice, and opens the job. Each internal
+   status step is still permission-checked and written to the audit trail.
+
+Once the job is open, the **apply link** appears in a green strip at the top of the job
+page with **Copy link**, **QR code** (with **Download QR**), **Email** and **Preview**. On
+the other tabs, a banner shows the next setup step until the job is open.
+
+The status shown on a job is in plain words: **Setting up**, **Open for applications**,
+**Paused**, **Reviewing candidates**, **Interviewing**, **Completed**, **Closed** or
+**Cancelled**.
 
 ## The campaign detail tabs
 
-Open a campaign from the **Campaigns** list. The tabs are:
-
-- **Overview** — status, lifecycle buttons, the **Team access** (assignment) card, and the
-  **Candidate apply link** card. That card shows the public application URL with a **Copy
-  public link** button, an auto-generated **QR code** (candidates scan it from a flyer or a
-  shared screen) with its own **Copy link** / **Download QR** buttons, plus **Share via
-  email** and **Open apply page**. A 🔒 on a tab means that tab is read-only for your role.
-- **Job Description** — upload a JD, review the extracted draft, approve it. Scoring criteria
-  and the default 50% threshold are generated and approved automatically when the JD is
-  approved, so there is **no separate Rules tab** to configure by hand.
-- **Form** — create and approve the application form.
-- **Applications & Screening** — see every applicant with their **Resume Score**, open each
+- **1 · Setup**: the checklist, the job description (upload, check, approve) and the
+  application form (create, approve). There is **no separate Rules tab**.
+- **2 · Candidates**: see every applicant with their **Resume Score**, open each
   candidate's **Resume Score** (scorecard) to inspect the evidence, or click **View form**
   to see exactly what the candidate submitted on the application form. **Run screening** per
   application; re-running creates a new immutable result and never overwrites the previous
@@ -138,28 +152,40 @@ Open a campaign from the **Campaigns** list. The tabs are:
   remove them. An interviewer only ever sees the candidates for jobs/stages they are
   assigned to; this is enforced server-side, not just hidden in the UI.
 
+- **Settings**: **Team access** (assignment), **Job status** (pause, close, reopen, cancel;
+  each needs a reason), and **Approvals on record**. While a job is being set up, the
+  step-by-step status buttons are tucked under *Advanced*, because the checklist's **Open for
+  applications** button replaces them. A 🔒 on a tab means it is read-only for your role.
+
 Buttons you cannot use are disabled with a short reason (e.g. "needs the Recruiter role" or
 "you're not assigned to this campaign"), so you always know why.
 
-## Fast local shortcut: open a campaign in one click
+## Local testing shortcut
 
-Opening a campaign the proper way takes several approvals across roles. For local
-evaluation, each campaign's **Overview** tab has an **"Open this campaign now (dev)"**
-button that creates and approves all five artifacts and drives the campaign to
-**Applications Open** in one click — and assigns you to it. This button only exists in
-local/dev environments.
+For local evaluation only, **Settings** has a **Local testing shortcut** card ("Open this
+campaign now (dev)") that creates and approves everything with test data and opens the job
+in one click. It skips the normal approvals, so it only exists in local/dev environments and
+must never be used for a real job. For real jobs use the Setup checklist.
 
-## The Review Queue
+## The Review inbox
 
-Candidates are **not** added to the review queue by hand. The queue fills **automatically**
-when screening routes someone to a human (missing or low-confidence evidence, a conflict,
-or a borderline/mandatory-not-confirmed result). To populate it:
+The **Review inbox** (sidebar → My tasks) lists every candidate waiting for a person to
+decide, across **all jobs you're assigned to**. There is no campaign to pick first.
 
-1. Open a campaign → **Applications & Screening** → **Run screening** on an applicant.
-2. Go to **Review Queue** (sidebar) → select that campaign → flagged items appear.
-3. On each item, enter a reason and choose an action: **Recommend interview**, **Waitlist**,
-   **Request info**, or **Escalate**. Resolving actions clear the item from the open queue.
-   Every action is recorded in the audit trail.
+- Items are sorted **oldest first**. Anything waiting 3 days or more is marked and can be
+  filtered with **Waiting 3+ days**.
+- **Filter chips** show a count per reason, in plain words: *Missing info*, *Needs a check*,
+  *Hard to read*, *Conflicting details*, *Close to cut-off*, *Possible duplicate* and so on.
+  *Missing info* means the resume doesn't show a must-have; that is not proof the candidate
+  lacks it.
+- Click a row to open it: **View resume & score**, **Journey**, **Open job**, then type a
+  reason and choose **Select for interview**, **Waitlist**, **Ask for info** or **Ask hiring
+  manager**. The buttons stay disabled until you enter a reason. Select and Waitlist remove
+  the item from your inbox; the other two keep it there. Every action is in the audit trail.
+- When nothing is waiting you'll see **All caught up**.
+
+Items are not added by hand. They arrive automatically when screening routes someone to a
+person (missing or low-confidence evidence, a conflict, or a borderline result).
 
 ## A ready-made demo campaign
 
@@ -169,10 +195,10 @@ A fully-populated walkthrough campaign is seeded for convenience:
 - **Campaign:** "DEMO - Senior Python Engineer" (already **Applications Open**)
 - **3 synthetic applicants** already screened, spanning outcomes (a strong match, a
   borderline case, and one whose mandatory experience is not confirmed)
-- **3 open review items** waiting in the Review Queue
+- **3 open review items** waiting in the Review inbox
 
 To explore it: sign in as `synthetic.recruiter@example.com`, open the DEMO campaign, look at
-the **Applications & Screening** tab, then open the **Review Queue** and act on the items.
+the **2 · Candidates** tab, then open the **Review inbox** and act on the items.
 Sign in as `synthetic.recruiter_admin@example.com` to see the approval and decision side,
 and as `synthetic.interview_panel@example.com` to see attendance and assessments.
 

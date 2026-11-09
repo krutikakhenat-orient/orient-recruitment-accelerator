@@ -19,8 +19,13 @@ from app.modules.assessments.schemas import (
     PanelDashboardRead,
     PanelInterviewRead,
 )
+from app.modules.assessments.summary import FeedbackSummaryRead, build_summary
 from app.modules.identity.permissions import Permission
-from app.modules.identity.policy import has_permission, require_permission
+from app.modules.identity.policy import (
+    has_permission,
+    require_campaign_permission,
+    require_permission,
+)
 from app.modules.identity.schemas import AuthenticatedActor
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["assessments"])
@@ -77,6 +82,19 @@ def panel_dashboard(
         total=len(rows),
         interviews=interviews,
     )
+
+
+@router.get("/summary/{application_id}", response_model=FeedbackSummaryRead)
+def feedback_summary(
+    application_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> FeedbackSummaryRead:
+    """All interviewers' feedback for one candidate, gathered side by side (advisory).
+    Needs candidate.view for the candidate's campaign; panel members do not see it."""
+    application = application_service.get_application(db, actor.organisation_id, application_id)
+    require_campaign_permission(actor, Permission.CANDIDATE_VIEW, application.campaign_id)
+    return build_summary(db, actor.organisation_id, application_id)
 
 
 @router.get("/by-application/{application_id}", response_model=AssessmentDetailRead | None)

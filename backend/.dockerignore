@@ -1,0 +1,13 @@
+# Keep local state, caches and secrets out of every image build context.
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+*.egg-info
+__pycache__
+*.pyc
+local_dev.sqlite3
+local_dev_objectstore
+tests
+.env
+.env.*

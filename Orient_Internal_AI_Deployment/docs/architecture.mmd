@@ -1,0 +1,40 @@
+flowchart TB
+  cand([Candidate browser])
+  hr([HR user browser])
+
+  subgraph acct["AWS account Orient_Internal_AI, ap-south-1"]
+    amp["Amplify Hosting<br/>React SPA<br/>/api/* rewrite"]
+    apigw["API Gateway HTTP API<br/>throttling + access logs<br/>only entry to Lambda"]
+
+    subgraph vpc["VPC"]
+      nat["fck-nat + EIP"]
+      api["Lambda api<br/>FastAPI: app JWT, RBAC,<br/>checks interview link token,<br/>signs wss URL locally"]
+      ops["Lambda ops<br/>migrate / seed<br/>IAM invoke only"]
+      db[("Aurora Serverless v2<br/>private, encrypted")]
+    end
+
+    files[("S3 files<br/>private")]
+    role["Lambda IAM role<br/>InvokeAgentRuntime<br/>+ WebSocketStream<br/>this runtime ARN only"]
+
+    subgraph ac["AgentCore interview runtime (IAM / SigV4 inbound auth)"]
+      pol["Resource policy:<br/>Allow api Lambda role<br/>Deny all other principals<br/>Deny user-id delegation"]
+      agent["Agent: /ws, validates<br/>join_token + session id"]
+    end
+    ai["Transcribe / Polly / Bedrock"]
+    res[("S3 interview results")]
+  end
+
+  hr -->|HTTPS| amp
+  cand -->|HTTPS + single-use link token| amp
+  amp -->|/api/*| apigw --> api
+  api --> db
+  ops --> db
+  api --> files
+  api -->|InvokeAgentRuntime: prepare, via NAT| nat --> pol
+  api -.-> role
+  api -->|returns pre-signed wss, 60 s,<br/>bound to session id| cand
+  cand ==>|WebSocket, SigV4 pre-signed URL| pol
+  pol --> agent
+  agent --> ai
+  agent --> res
+  agent -.->|HMAC webhook, to wire| apigw

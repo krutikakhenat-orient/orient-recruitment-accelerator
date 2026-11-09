@@ -9,8 +9,9 @@ import {
   type DecisionOutcome,
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
+import { JourneyButton } from "../components/JourneyButton";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, Empty, ErrorNote, Field, Loading, prettify, toneFor } from "../components/ui";
+import { PageHeader, Badge, Button, Card, Empty, ErrorNote, Field, Loading, prettify, toneFor } from "../components/ui";
 
 const FILTERS: { key: string; label: string; states: string[] }[] = [
   { key: "all", label: "All", states: ["selected", "rejected", "hold"] },
@@ -48,17 +49,11 @@ export function OutcomesPage(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Hiring Outcomes</h1>
-        <p>
-          Every candidate with a final decision — selected, rejected, or on hold — with the reason.
-          Contact details stay masked until you reveal them; each reveal is recorded in the audit
-          trail.
-        </p>
-      </div>
+      <PageHeader title="Hiring Outcomes" description={<>Every candidate with a final decision — selected, rejected, or on hold — with the reason. Contact details stay masked until you reveal them; each reveal is recorded in the audit trail.</>} />
 
       <Card
         title="Decided candidates"
+        description="Filter by outcome or search by name. Contact details stay hidden until you press Reveal."
         actions={
           <div className="btn-row">
             <Badge tone="ok">{counts.selected} selected</Badge>
@@ -100,6 +95,7 @@ export function OutcomesPage(): ReactNode {
                   <th>Outcome</th>
                   <th>Reason</th>
                   <th>Contact</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -163,6 +159,9 @@ function OutcomeRow({ item }: { item: DecisionOutcome }): ReactNode {
             {reveal.isPending ? "Revealing…" : "Reveal contact"}
           </Button>
         )}
+      </td>
+      <td style={{ textAlign: "right" }}>
+        <JourneyButton applicationId={item.application_id} />
       </td>
     </tr>
   );

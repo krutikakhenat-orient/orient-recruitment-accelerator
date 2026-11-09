@@ -59,3 +59,9 @@ staged.txt
 
 # Diagnostic test output accidentally committed (synthetic data, not source)
 frontend/assess_out.txt
+
+# AWS serverless trial deployment (deploy/aws): build output, CDK output, generated secrets
+deploy/aws/build/
+deploy/aws/cdk.out/
+deploy/aws/.secrets.json
+deploy/aws/__pycache__/

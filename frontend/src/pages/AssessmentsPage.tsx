@@ -1,3 +1,4 @@
+import { ClipboardList, FileText, FolderOpen } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -15,7 +16,7 @@ import {
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, Drawer, Empty, ErrorNote, Field, Loading, prettify } from "../components/ui";
+import { PageHeader, Badge, Button, Card, Drawer, Empty, ErrorNote, Field, Loading, prettify } from "../components/ui";
 import {
   HIDDEN_ANSWER_KEYS,
   isSalaryKey,
@@ -82,15 +83,7 @@ export function AssessmentsPage(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <h1>My Assigned Interviews</h1>
-        <p>
-          On interview day, <strong>check the candidate in</strong> when they arrive — this opens
-          their assessment. Record your assessment, then <strong>check them out</strong> when the
-          interview is finished. You do not see screening scores; your verdict is one input the
-          hiring team weighs.
-        </p>
-      </div>
+      <PageHeader title="My Assigned Interviews" description={<>On interview day, <strong>check the candidate in</strong> when they arrive — this opens their assessment. Record your assessment, then <strong>check them out</strong> when the interview is finished. You do not see screening scores; your verdict is one input the hiring team weighs.</>} />
 
       {/* Panel KPI cards. */}
       <div className="kpi-row" style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
@@ -113,7 +106,10 @@ export function AssessmentsPage(): ReactNode {
         </Card>
       )}
 
-      <Card title="Scheduled — waiting to check in">
+      <Card
+          title="Scheduled — waiting to check in"
+          description="Check each candidate in when they arrive. This opens their assessment."
+        >
         {toCheckIn.length === 0 ? (
           <Empty>No candidates are waiting to be checked in.</Empty>
         ) : (
@@ -141,7 +137,10 @@ export function AssessmentsPage(): ReactNode {
         )}
       </Card>
 
-      <Card title="In progress — checked in">
+      <Card
+          title="In progress — checked in"
+          description="Record your assessment, then check the candidate out when the interview is over."
+        >
         {inProgress.length === 0 ? (
           <Empty>
             No interviews are in progress. A candidate appears here once you check them in.
@@ -186,7 +185,7 @@ export function AssessmentsPage(): ReactNode {
       </Card>
 
       {completed.length > 0 && (
-        <Card title="Completed — checked out">
+        <Card title="Completed — checked out" description="Interviews you have finished.">
           {groupByRole(completed).map(({ id, label, rows }) => (
             <div key={id} style={{ marginBottom: 18 }}>
               <RoleHeading role={label} count={rows.length} />
@@ -309,13 +308,13 @@ function CandidateDetail({ item, onClose }: { item: PanelInterview; onClose: () 
     >
       <div className="btn-row" style={{ marginBottom: 12 }}>
         <Button variant={tab === "assessment" ? "primary" : "default"} small onClick={() => setTab("assessment")}>
-          📝 Assessment
+          <ClipboardList size={14} aria-hidden="true" className="inline-icon" />Assessment
         </Button>
         <Button variant={tab === "resume" ? "primary" : "default"} small onClick={() => setTab("resume")}>
-          📄 Resume
+          <FileText size={14} aria-hidden="true" className="inline-icon" />Resume
         </Button>
         <Button variant={tab === "application" ? "primary" : "default"} small onClick={() => setTab("application")}>
-          🗂 Application Form
+          <FolderOpen size={14} aria-hidden="true" className="inline-icon" />Application Form
         </Button>
       </div>
 

@@ -16,14 +16,20 @@ from app.modules.campaigns.schemas import (
     CampaignAssignRequest,
     CampaignCreate,
     CampaignRead,
+    CampaignSetupStatusRead,
     CampaignTransitionRequest,
     ClosureReadinessRead,
+    SetupStepRead,
 )
 from app.modules.campaigns.states import CampaignState
 from app.modules.campaigns.transition_service import transition
 from app.modules.identity import repository as identity_repo
 from app.modules.identity.permissions import Permission
-from app.modules.identity.policy import require_campaign_permission, require_permission
+from app.modules.identity.policy import (
+    has_permission,
+    require_campaign_permission,
+    require_permission,
+)
 from app.modules.identity.schemas import AuthenticatedActor
 
 router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
@@ -164,6 +170,59 @@ def fast_track_open(
     checked and audited; it only collapses the final approval gates."""
     campaign = service.get_campaign(db, actor.organisation_id, campaign_id)
     updated = service.fast_track_open(db, actor=actor, campaign=campaign)
+    return CampaignRead.model_validate(updated)
+
+
+@router.get("/{campaign_id}/setup-status", response_model=CampaignSetupStatusRead)
+def campaign_setup_status(
+    campaign_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> CampaignSetupStatusRead:
+    """The "Set up this job" checklist: which setup steps are done and what is next.
+
+    Read-only. Requires assignment to the campaign and ``campaign.edit`` or
+    ``campaign.publish`` (the people who set a job up). Exposes no candidate data.
+    """
+    campaign = service.get_campaign(db, actor.organisation_id, campaign_id)
+    needed = (
+        Permission.CAMPAIGN_PUBLISH
+        if has_permission(actor, Permission.CAMPAIGN_PUBLISH)
+        else Permission.CAMPAIGN_EDIT
+    )
+    require_campaign_permission(actor, needed, campaign_id)
+    status = service.setup_status(db, campaign=campaign)
+    return CampaignSetupStatusRead(
+        campaign_id=status.campaign_id,
+        is_open=status.is_open,
+        next_step_key=status.next_step_key,
+        steps=[
+            SetupStepRead(
+                key=s.key, title=s.title, description=s.description,
+                status=s.status, who=s.who,
+            )
+            for s in status.steps
+        ],
+        latest_jd_version_id=status.latest_jd_version_id,
+        latest_jd_status=status.latest_jd_status,
+        draft_form_version_id=status.draft_form_version_id,
+    )
+
+
+@router.post("/{campaign_id}/open-for-applications", response_model=CampaignRead)
+def open_for_applications(
+    campaign_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> CampaignRead:
+    """Open a fully set-up job for applications (requires ``campaign.publish`` + assignment).
+
+    Fails with a plain message naming the missing checklist step. Every internal state hop
+    runs through the TransitionService and is audited; attaching the default privacy notice
+    is audited too.
+    """
+    campaign = service.get_campaign(db, actor.organisation_id, campaign_id)
+    updated = service.open_for_applications(db, actor=actor, campaign=campaign)
     return CampaignRead.model_validate(updated)
 
 

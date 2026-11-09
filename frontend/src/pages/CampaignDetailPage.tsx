@@ -1,3 +1,4 @@
+import { Eye, Lock, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -39,8 +40,18 @@ import {
   type ScreeningRun,
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
+import { AiInterviewsPanel } from "../components/AiInterviewsPanel";
+import {
+  ApplyLinkStrip,
+  NextStepBanner,
+  SetupChecklist,
+  useSetupStatus,
+  type SetupSection,
+} from "../components/CampaignSetup";
+import { isSettingUp, plainCampaignStatus } from "../lib/campaignStatus";
 import { CandidateScorecardDrawer } from "../components/CandidateScorecardDrawer";
-import { QrCode, qrDataUri } from "../components/QrCode";
+import { ConfirmationControls } from "../components/ConfirmationControls";
+import { JourneyButton } from "../components/JourneyButton";
 import {
   HIDDEN_ANSWER_KEYS,
   prettyFieldKey,
@@ -57,26 +68,54 @@ import {
   Field,
   Loading,
   Modal,
+  PageHeader,
+  Tabs,
   prettify,
   toneFor,
 } from "../components/ui";
 
-// NOTE: the standalone "form" tab was removed. The application form BUILDER now lives in
-// the Job Description tab (campaign setup), and submitted application data is viewed via the
-// Applications tab's "View form" action. The form feature/API/records are unchanged.
-type Tab = "overview" | "jd" | "applications" | "interviews";
+// Tabs follow the order HR works in: set the job up, then handle candidates, then
+// interviews. Team access and status controls live under Settings so they don't compete
+// with the day-to-day work. Scoring criteria and the default 50% threshold are generated
+// and approved automatically when the JD is approved, so there is no "rules" tab.
+type Tab = "setup" | "candidates" | "interviews" | "settings";
+const TAB_ORDER: Tab[] = ["setup", "candidates", "interviews", "settings"];
 
-// Which permission each authoring tab's primary action needs, and a human label for the
-// role that typically holds it. Used to show relevant guidance and gate actions.
-// NOTE: there is deliberately no "rules" tab — scoring criteria and the default 50%
-// threshold are generated and approved automatically when the JD is approved, so HR never
-// configures a rule set by hand.
-const TAB_META: Record<Tab, { permission: string | null; role: string; blurb: string }> = {
-  overview: { permission: null, role: "All staff", blurb: "Status, lifecycle and the candidate apply link." },
-  jd: { permission: "jd.upload", role: "Recruiter", blurb: "Upload the job description and build the candidate application form — scoring criteria are generated from the JD automatically." },
-  applications: { permission: "screening.execute", role: "Recruiter", blurb: "View applications and run deterministic screening." },
-  interviews: { permission: "interview.approve", role: "Recruiter Admin", blurb: "Select candidates for interview, manage stages and slots. Attendance is recorded by the interview panel." },
+const TAB_META: Record<Tab, { label: string; permission: string | null; role: string; blurb: string }> = {
+  setup: {
+    label: "1 · Setup",
+    permission: "jd.upload",
+    role: "Recruiter",
+    blurb: "Upload the job description, approve it and the application form, then open the job.",
+  },
+  candidates: {
+    label: "2 · Candidates",
+    permission: "screening.execute",
+    role: "Recruiter",
+    blurb: "Everyone who applied, their screening score, and walk-in resumes.",
+  },
+  interviews: {
+    label: "3 · Interviews",
+    permission: "interview.approve",
+    role: "Recruiter Admin",
+    blurb: "Pick who to interview, set up interview slots and track confirmations.",
+  },
+  settings: {
+    label: "Settings",
+    permission: null,
+    role: "All staff",
+    blurb: "Who works on this job, and controls to pause, close or reopen it.",
+  },
 };
+
+/* Move to the Setup tab and bring a section into view (used by checklist buttons). */
+function scrollToSection(id: string): void {
+  window.requestAnimationFrame(() => {
+    const el = document.getElementById(id);
+    el?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    el?.focus?.({ preventScroll: true });
+  });
+}
 
 /* Trigger a browser "save file" for an already-fetched Blob, then release the object URL.
    Shared by the campaign Excel export and the per-candidate resume download so both use one
@@ -94,10 +133,10 @@ function triggerBrowserDownload(blob: Blob, filename: string): void {
 }
 
 const PREREQS: { key: string; label: string }[] = [
-  { key: "approved_jd_version_id", label: "Approved JD" },
-  { key: "approved_rule_set_version_id", label: "Approved rules" },
-  { key: "approved_form_version_id", label: "Approved form" },
-  { key: "active_threshold_version_id", label: "Active threshold" },
+  { key: "approved_jd_version_id", label: "Job description" },
+  { key: "approved_rule_set_version_id", label: "Screening criteria" },
+  { key: "approved_form_version_id", label: "Application form" },
+  { key: "active_threshold_version_id", label: "Score threshold" },
   { key: "privacy_notice_version", label: "Privacy notice" },
 ];
 
@@ -225,13 +264,13 @@ function AccessNote({
     <div className="hint-list" style={{ marginBottom: 12 }}>
       {lacksPermission && (
         <div>
-          🔒 This action needs the <strong>{role}</strong> role. You're signed in with a
+          <Lock size={14} aria-hidden="true" className="inline-icon" />This action needs the <strong>{role}</strong> role. You're signed in with a
           different role, so it's read-only for you here.
         </div>
       )}
       {!lacksPermission && notAssigned && (
         <div>
-          🔒 You're not assigned to this campaign yet. Use <strong>Assign me</strong> on the
+          <Lock size={14} aria-hidden="true" className="inline-icon" />You're not assigned to this campaign yet. Use <strong>Assign me</strong> on the
           Overview tab, then try again.
         </div>
       )}
@@ -243,7 +282,8 @@ export function CampaignDetailPage(): ReactNode {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const { actor, hasPermission, refreshActor } = useAuth();
-  const [tab, setTab] = useState<Tab>("overview");
+  // null = not chosen yet: open on Setup while the job is being set up, else on Candidates.
+  const [chosenTab, setTab] = useState<Tab | null>(null);
   // Lets an approver drop out of Focus Mode into the full tabbed console if they want.
   const [forceFull, setForceFull] = useState(false);
   const campaign = useQuery({ queryKey: ["campaign", id], queryFn: () => getCampaign(id) });
@@ -298,48 +338,74 @@ export function CampaignDetailPage(): ReactNode {
     );
   }
 
+  const settingUp = isSettingUp(c.state);
+  const tab: Tab = chosenTab ?? (settingUp ? "setup" : "candidates");
+  const status = plainCampaignStatus(c.state);
+  const acceptingApplications = c.state === "applications_open" || c.state === "published";
+  const goToSetup = (section?: SetupSection): void => {
+    setTab("setup");
+    if (section) scrollToSection(section);
+  };
+
   return (
     <>
-      <div className="page-head">
-        <Link to="/campaigns" className="subtle">
-          ← Campaigns
-        </Link>
-        <h1 style={{ marginTop: 6 }}>{c.name}</h1>
-        <p>
-          {c.position_title} · {c.number_of_openings} opening(s) ·{" "}
-          <Badge tone={toneFor(c.state)}>{prettify(c.state)}</Badge>
-        </p>
-      </div>
+      <Link to="/campaigns" className="subtle">
+        ← Campaigns
+      </Link>
+      <PageHeader
+        title={c.name}
+        description={
+          <span className="campaign-status-line">
+            {c.position_title} · {c.number_of_openings} opening(s) ·{" "}
+            <Badge tone={status.tone}>{status.label}</Badge>
+            <span className="subtle">{status.hint}</span>
+          </span>
+        }
+      />
 
-      <div className="btn-row" style={{ marginBottom: 6 }}>
-        {(["overview", "jd", "applications", "interviews"] as Tab[]).map((t) => {
+      {acceptingApplications && <ApplyLinkStrip campaign={c} />}
+      {settingUp && tab !== "setup" && <NextStepBanner campaign={c} onGo={() => goToSetup()} />}
+
+      <Tabs
+        label="Job sections"
+        value={tab}
+        onChange={(t) => setTab(t as Tab)}
+        tabs={TAB_ORDER.map((t) => {
           const meta = TAB_META[t];
           const readOnly = meta.permission !== null && !hasPermission(meta.permission);
-          const label =
-            t === "jd" ? "Job Description & Form" : t === "applications" ? "Applications & Screening" : prettify(t);
-          return (
-            <Button key={t} variant={tab === t ? "primary" : "default"} small onClick={() => setTab(t)}>
-              {label}
-              {readOnly ? " 🔒" : ""}
-            </Button>
-          );
+          return {
+            id: t,
+            label: (
+              <>
+                {meta.label}
+                {readOnly && <Lock size={13} aria-label="read only" className="inline-icon" style={{ marginLeft: 6 }} />}
+              </>
+            ),
+          };
         })}
-      </div>
-      <p className="subtle" style={{ marginTop: 0, marginBottom: 16 }}>
-        {TAB_META[tab].blurb} {TAB_META[tab].permission && <>· Primary action: <strong>{TAB_META[tab].role}</strong></>}
+      />
+      <p className="subtle mt-0 mb-4">
+        {TAB_META[tab].blurb} {TAB_META[tab].permission && <>· Main role: <strong>{TAB_META[tab].role}</strong></>}
       </p>
-
-      {tab === "overview" && <OverviewTab campaignId={id} />}
-      {tab === "jd" && (
+      {tab === "setup" && (
         <>
+          <SetupChecklist campaign={c} onGo={(section) => goToSetup(section)} />
           <JdTab campaignId={id} />
-          {/* The application-form builder now lives here (the standalone Form tab was
-              removed). The feature, its API and records are unchanged. */}
           <FormTab campaignId={id} />
         </>
       )}
-      {tab === "applications" && <ApplicationsTab campaignId={id} />}
+      {tab === "candidates" && (
+        <>
+          {settingUp && (
+            <p className="hint-line">
+              Candidates appear here once the job is open and people apply. You can also add walk-in resumes below.
+            </p>
+          )}
+          <ApplicationsTab campaignId={id} />
+        </>
+      )}
       {tab === "interviews" && <InterviewsTab campaignId={id} />}
+      {tab === "settings" && <SettingsTab campaignId={id} />}
     </>
   );
 }
@@ -458,7 +524,7 @@ function FocusedJdReview({
               </>
             ) : (
               <p className="subtle" style={{ marginTop: 0 }}>
-                🔒 Approving a JD needs the <strong>jd.approve</strong> permission and campaign
+                <Lock size={14} aria-hidden="true" className="inline-icon" />Approving a JD needs the <strong>jd.approve</strong> permission and campaign
                 assignment.
               </p>
             )}
@@ -644,7 +710,10 @@ function InterviewerAssignmentsCard({
   );
 
   return (
-    <Card title="Interviewer assignments">
+    <Card
+          title="Interviewer assignments"
+          description="Choose which panel members interview for this job. They only see candidates for jobs they are assigned to."
+        >
       <p className="subtle" style={{ marginTop: 0 }}>
         Assign interview-panel members to this job. An interviewer sees only the candidates
         for jobs (and, if set, the stage) they are assigned to. This panel shows assignment
@@ -845,7 +914,23 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
       <AccessNote campaignId={campaignId} permission="interview.approve" role="Recruiter Admin / Hiring Manager" />
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      <Card title="Candidates for interview">
+      <AiInterviewsPanel
+        campaignId={campaignId}
+        nameOf={(id) => {
+          const a = appById.get(id);
+          return a ? nameOf(a) : id.slice(0, 8);
+        }}
+        offerable={(apps.data ?? [])
+          .filter((a) =>
+            ["screened", "manual_review", "interview_recommended", "interview_scheduled"].includes(a.state),
+          )
+          .map((a) => ({ id: a.id, label: nameOf(a) }))}
+      />
+
+      <Card
+        title="Candidates for interview"
+        description="People recommended for an interview. An approver invites them; nobody is invited automatically."
+      >
         <p className="subtle" style={{ marginTop: 0 }}>
           Candidates who score <strong>50% or above</strong> are added to the Interview Panel&rsquo;s
           list <strong>automatically</strong> — they appear directly on the Interview Panel tab.
@@ -895,7 +980,7 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
                             Select for interview
                           </Button>
                         ) : (
-                          <span className="subtle">🔒 Needs interview approve + schedule</span>
+                          <span className="subtle"><Lock size={14} aria-hidden="true" className="inline-icon" />Needs interview approve + schedule</span>
                         )}
                       </td>
                     </tr>
@@ -961,7 +1046,10 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
         </Modal>
       )}
 
-      <Card title="Interview invitations">
+      <Card
+        title="Interview invitations"
+        description="Send each candidate a personal link to confirm their interview. Their reply tells the interviewer automatically."
+      >
         {invites.isLoading && <Loading />}
         {invites.data && invites.data.length === 0 && <Empty>No invitations yet.</Empty>}
         {invites.data && invites.data.length > 0 && (
@@ -995,6 +1083,9 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
                         {inv.slot_id && inv.attendance === "pending" && (
                           <span className="subtle">With interview panel</span>
                         )}
+                        {inv.attendance === "pending" && (
+                          <ConfirmationControls invitationId={inv.id} />
+                        )}
                       </td>
                     </tr>
                   );
@@ -1005,13 +1096,16 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
         )}
       </Card>
 
-      <Card title="Stages & slots">
+      <Card
+        title="Stages & slots"
+        description="A stage is an interview round. A slot is a time with room for a set number of candidates."
+      >
         <p className="subtle" style={{ marginTop: 0 }}>
           Create interview stages (e.g. &ldquo;Technical Round&rdquo;) and capacity-limited time slots.
         </p>
         {!canSchedule && (
           <div className="hint-list" style={{ marginBottom: 12 }}>
-            🔒 Scheduling (stages and slots) is done by the{" "}
+            <Lock size={14} aria-hidden="true" className="inline-icon" />Scheduling (stages and slots) is done by the{" "}
             <strong>Recruiter / Recruiter Admin</strong>
             {hasPermission("interview.schedule")
               ? " — and you must be assigned to this campaign (use “Assign me” on the Overview tab)."
@@ -1177,7 +1271,7 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
                   to={`/campaigns/${campaignId}/report`}
                   title="Open the candidate report inside the app — read, search and scroll the same data as the Excel download, then download the .xlsx from there."
                 >
-                  👁 Preview Excel
+                  <Eye size={14} aria-hidden="true" className="inline-icon" />Preview Excel
                 </Link>
               )}
               {canExport && (
@@ -1225,7 +1319,7 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
         <p className="subtle" style={{ marginTop: 0 }}>
           Each submitted application can be screened against the approved rules. Screening is
           deterministic and never auto-rejects — low-confidence or borderline results are routed to
-          the Review Queue for a person to decide. Open a candidate&rsquo;s{" "}
+          the Review inbox for a person to decide. Open a candidate&rsquo;s{" "}
           <strong>Resume Score</strong> to inspect evidence and (with permission) contact details,
           or <strong>View form</strong> to see what the candidate submitted.
         </p>
@@ -1452,7 +1546,7 @@ function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUplo
                     onClick={() => setFiles((prev) => prev.filter((_, idx) => idx !== i))}
                     aria-label={`Remove ${f.name}`}
                   >
-                    ✕
+                    <X size={14} aria-hidden="true" className="inline-icon" />
                   </button>
                 </li>
               ))}
@@ -1640,7 +1734,14 @@ function ApplicationRow({
               {downloadingResume ? "Downloading…" : "⤓ Resume"}
             </Button>
           )}
-          <Button variant="default" small disabled={loadingCard} onClick={() => void openScorecard()}>
+          <JourneyButton applicationId={app.id} />
+          <Button
+            variant="default"
+            small
+            disabled={loadingCard}
+            title="See the score and the evidence behind each part of it"
+            onClick={() => void openScorecard()}
+          >
             {loadingCard ? "Opening…" : "Resume Score"}
           </Button>
           <Button
@@ -1658,7 +1759,7 @@ function ApplicationRow({
   );
 }
 
-function OverviewTab({ campaignId }: { campaignId: string }): ReactNode {
+function SettingsTab({ campaignId }: { campaignId: string }): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
   const { hasPermission, canAccessCampaign, refreshActor } = useAuth();
@@ -1673,7 +1774,7 @@ function OverviewTab({ campaignId }: { campaignId: string }): ReactNode {
       setReason("");
       void qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
       void qc.invalidateQueries({ queryKey: ["campaigns"] });
-      toast.push("Campaign advanced", { tone: "ok" });
+      toast.push("Job status updated", { tone: "ok" });
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Transition failed."),
   });
@@ -1751,88 +1852,61 @@ function OverviewTab({ campaignId }: { campaignId: string }): ReactNode {
   const c = campaign.data;
   const nexts = NEXT[c.state] ?? [];
   const assigned = canAccessCampaign(campaignId);
-
-  const applyPath = `/apply/${campaignId}`;
-  const applyUrl = `${window.location.origin}${applyPath}`;
+  const settingUp = isSettingUp(c.state);
   const isOpen = c.state === "applications_open";
-  const copyApplyLink = (): void => {
-    void navigator.clipboard
-      .writeText(applyUrl)
-      .then(() => toast.push("Apply link copied", { tone: "ok" }))
-      .catch(() => toast.push("Could not copy — select and copy manually", { tone: "danger" }));
-  };
+
+  const lifecycleControls =
+    nexts.length === 0 ? (
+      <p className="subtle">There are no status changes available from here.</p>
+    ) : (
+      <>
+        <Field label="Reason (saved in the audit trail)" htmlFor="t-reason">
+          <input
+            id="t-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Hiring freeze until next quarter"
+          />
+        </Field>
+        <div className="btn-row">
+          {nexts.map((n) => {
+            const perm = TRANSITION_PERMISSION[n.to];
+            const allowed = assigned && (!perm || hasPermission(perm));
+            return (
+              <Button
+                key={n.to}
+                variant={n.to === "cancelled" ? "danger" : "primary"}
+                small
+                disabled={transition.isPending || !allowed}
+                title={
+                  allowed
+                    ? undefined
+                    : !assigned
+                      ? "You're not assigned to this job"
+                      : `Needs the ${perm} permission`
+                }
+                onClick={() => {
+                  void requestTransition(n.to);
+                }}
+              >
+                {n.label}
+              </Button>
+            );
+          })}
+        </div>
+      </>
+    );
 
   return (
     <>
-      <Card
-        title="Candidate apply link"
-        actions={<Badge tone={isOpen ? "ok" : "warn"}>{isOpen ? "Open" : "Not open yet"}</Badge>}
-      >
-        <p className="subtle" style={{ marginTop: 0 }}>
-          Candidates apply here — no account needed. Share this public link (or the QR code) once
-          the campaign is in the <strong>Applications open</strong> state. Submissions before then
-          are rejected.
-        </p>
-        <div className="apply-link-layout">
-          <div className="apply-link-layout__main">
-            <div className="field">
-              <label htmlFor="apply-url">Public application URL</label>
-              <input id="apply-url" readOnly value={applyUrl} onFocus={(e) => e.currentTarget.select()} />
-            </div>
-            <div className="btn-row">
-              <Button variant="primary" small onClick={copyApplyLink}>
-                Copy public link
-              </Button>
-              <a
-                className="btn btn--default btn--sm"
-                href={`mailto:?subject=${encodeURIComponent(
-                  `Apply: ${c.position_title}`,
-                )}&body=${encodeURIComponent(
-                  `Apply for ${c.position_title} here: ${applyUrl}`,
-                )}`}
-              >
-                Share via email
-              </a>
-              <a className="btn btn--default btn--sm" href={applyPath} target="_blank" rel="noreferrer">
-                Open apply page ↗
-              </a>
-            </div>
-          </div>
-
-          {/* Auto-generated QR for the public apply URL. Generated entirely in-browser, so
-              the link never leaves the page. Candidates can scan it from a printed flyer or
-              a shared screen; HR can copy the link or download the QR as an SVG. */}
-          <div className="apply-qr">
-            <QrCode value={applyUrl} size={168} title={`Apply: ${c.position_title}`} />
-            <div className="apply-qr__caption">Scan to apply</div>
-            <div className="btn-row apply-qr__actions">
-              <Button variant="default" small onClick={copyApplyLink}>
-                Copy link
-              </Button>
-              {(() => {
-                const uri = qrDataUri(applyUrl);
-                return uri ? (
-                  <a
-                    className="btn btn--default btn--sm"
-                    href={uri}
-                    download={`apply-qr-${c.position_title.replace(/\s+/g, "-").toLowerCase()}.svg`}
-                  >
-                    Download QR
-                  </a>
-                ) : null;
-              })()}
-            </div>
-          </div>
-        </div>
-      </Card>
-
+      {error && <ErrorNote>{error}</ErrorNote>}
       <Card
         title="Team access"
+        description="Only people assigned to this job can work on it."
         actions={<Badge tone={assigned ? "ok" : "warn"}>{assigned ? "You're assigned" : "Not assigned"}</Badge>}
       >
         <p className="subtle" style={{ marginTop: 0 }}>
-          Only staff assigned to this campaign can act on it (upload JD, author rules, approve,
-          etc.). Assign yourself to pick up work, or assign a colleague by email.
+          Assign yourself to pick up work, or add a colleague by email.
         </p>
         <div className="btn-row" style={{ marginBottom: 12 }}>
           <Button
@@ -1875,18 +1949,54 @@ function OverviewTab({ campaignId }: { campaignId: string }): ReactNode {
         )}
       </Card>
 
-      {!isOpen && (
-        <Card title="Quick start (local dev)">
-          {error && <ErrorNote>{error}</ErrorNote>}
+      <Card
+        title="Job status"
+        description={
+          settingUp
+            ? "While setting up, use the checklist on the Setup tab. It opens the job in one step."
+            : "Pause, close or reopen this job. Every change needs a reason and is recorded."
+        }
+        actions={<Badge tone={plainCampaignStatus(c.state).tone}>{plainCampaignStatus(c.state).label}</Badge>}
+      >
+        {settingUp ? (
+          <details>
+            <summary className="subtle">Advanced: move through the setup stages one at a time</summary>
+            <p className="subtle">
+              Internal stage: <Badge tone={toneFor(c.state)}>{prettify(c.state)}</Badge>. Most people never need this.
+            </p>
+            {lifecycleControls}
+          </details>
+        ) : (
+          <>
+            <p className="subtle" style={{ marginTop: 0 }}>
+              Internal stage: <Badge tone={toneFor(c.state)}>{prettify(c.state)}</Badge>
+            </p>
+            {lifecycleControls}
+          </>
+        )}
+      </Card>
+
+      <Card title="Approvals on record" description="What has been approved for this job. Candidates can apply only when all are ready.">
+        <div className="btn-row">
+          {PREREQS.map((p) => (
+            <Badge key={p.key} tone={c[p.key as keyof typeof c] ? "ok" : "neutral"}>
+              {p.label}: {c[p.key as keyof typeof c] ? "ready" : "missing"}
+            </Badge>
+          ))}
+        </div>
+        <p className="hint-line" style={{ marginTop: 8 }}>
+          The privacy notice is attached automatically when the job is opened.
+        </p>
+      </Card>
+
+      {!isOpen && settingUp && (
+        <Card title="Local testing shortcut" description="Only works on a local or dev install. Not for real hiring.">
           <p className="subtle" style={{ marginTop: 0 }}>
-            Opening a campaign normally takes several approvals across multiple roles. For local
-            evaluation, this one click creates and approves all five artifacts (JD, rules, form,
-            threshold, privacy notice) and drives the campaign straight to{" "}
-            <strong>Applications open</strong>, so you can test the candidate apply form right away.
-            This action is only available in local/dev environments.
+            Creates and approves everything with test data and opens the job straight away, so you can try the
+            candidate apply form. It skips the normal approvals, so never use it for a real job.
           </p>
           <Button
-            variant="accent"
+            variant="default"
             small
             disabled={openNow.isPending}
             onClick={() => {
@@ -1898,67 +2008,6 @@ function OverviewTab({ campaignId }: { campaignId: string }): ReactNode {
           </Button>
         </Card>
       )}
-
-      <Card title="Publication readiness">
-        <p className="subtle" style={{ marginTop: 0 }}>
-          A campaign cannot be published until all five governed artifacts are approved.
-        </p>
-        <div className="btn-row">
-          {PREREQS.map((p) => (
-            <Badge key={p.key} tone={c[p.key as keyof typeof c] ? "ok" : "neutral"}>
-              {p.label}: {c[p.key as keyof typeof c] ? "ready" : "missing"}
-            </Badge>
-          ))}
-        </div>
-      </Card>
-
-      <Card title="Lifecycle">
-        {error && <ErrorNote>{error}</ErrorNote>}
-        <p className="subtle" style={{ marginTop: 0 }}>
-          Current state: <Badge tone={toneFor(c.state)}>{prettify(c.state)}</Badge>. Transitions are
-          guarded — invalid moves are rejected and every change is audited.
-        </p>
-        {nexts.length === 0 ? (
-          <p className="subtle">No guided transitions from this state in the simplified console.</p>
-        ) : (
-          <>
-            <Field label="Reason (recorded in the audit trail)" htmlFor="t-reason">
-              <input
-                id="t-reason"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. all artifacts approved"
-              />
-            </Field>
-            <div className="btn-row">
-              {nexts.map((n) => {
-                const perm = TRANSITION_PERMISSION[n.to];
-                const allowed = assigned && (!perm || hasPermission(perm));
-                return (
-                  <Button
-                    key={n.to}
-                    variant={n.to === "cancelled" ? "danger" : "primary"}
-                    small
-                    disabled={transition.isPending || !allowed}
-                    title={
-                      allowed
-                        ? undefined
-                        : !assigned
-                          ? "You're not assigned to this campaign"
-                          : `Needs the ${perm} permission`
-                    }
-                    onClick={() => {
-                      void requestTransition(n.to);
-                    }}
-                  >
-                    {n.label}
-                  </Button>
-                );
-              })}
-            </div>
-          </>
-        )}
-      </Card>
     </>
   );
 }
@@ -1983,9 +2032,12 @@ function JdTab({ campaignId }: { campaignId: string }): ReactNode {
     enabled: assigned && hasPermission("jd.review"),
   });
 
-  // The draft to act on: a just-uploaded one takes priority, else the latest server draft.
+  // The version to show: a just-uploaded one takes priority, else the latest server draft,
+  // else the approved version (so an approved JD stays visible after a reload).
   const serverDraft = versions.data?.find((v) => v.status === "draft") ?? null;
-  const draft = uploaded ?? serverDraft;
+  const serverApproved = versions.data?.find((v) => v.status === "approved") ?? null;
+  const draft = uploaded ?? serverDraft ?? serverApproved;
+  const jdApproved = draft?.status === "approved";
 
   const upload = async (): Promise<void> => {
     if (!file) return;
@@ -1995,7 +2047,8 @@ function JdTab({ campaignId }: { campaignId: string }): ReactNode {
       const v = await uploadJd(campaignId, file, token() ?? "");
       setUploaded(v);
       void qc.invalidateQueries({ queryKey: ["jd-versions", campaignId] });
-      toast.push("JD uploaded & extracted", { tone: "ok" });
+      void qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
+      toast.push("JD uploaded. Check the details below.", { tone: "ok" });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed.");
     } finally {
@@ -2009,7 +2062,7 @@ function JdTab({ campaignId }: { campaignId: string }): ReactNode {
       setUploaded(v);
       void qc.invalidateQueries({ queryKey: ["jd-versions", campaignId] });
       void qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
-      toast.push("JD version approved (now immutable)", { tone: "ok" });
+      toast.push("JD approved. Screening criteria were created from it.", { tone: "ok" });
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Approval failed."),
   });
@@ -2042,13 +2095,20 @@ function JdTab({ campaignId }: { campaignId: string }): ReactNode {
   const hasTitle = Boolean((draft?.position_title ?? "").trim());
 
   return (
-    <>
-      <Card title="Upload a job description">
+    <div id="setup-jd" tabIndex={-1} className="scroll-anchor">
+      <Card
+        title={jdApproved ? "Steps 1–2 · Job description (approved)" : "Steps 1–2 · Upload and approve the job description"}
+        description={
+          jdApproved
+            ? "Approved. Upload a new file only if the role has changed; it will need approval again."
+            : "Upload the JD. The system suggests the details, then an approver checks and approves them."
+        }
+      >
         {error && <ErrorNote>{error}</ErrorNote>}
         <AccessNote campaignId={campaignId} permission="jd.upload" role="Recruiter" />
         <p className="subtle" style={{ marginTop: 0 }}>
-          PDF, DOCX, or TXT. The file is validated, scanned, and quarantined; a draft is then
-          extracted for your review. Extraction is a suggestion only.
+          PDF, DOCX, or TXT. The file is checked and scanned first. What the system reads from it is a
+          suggestion until a person approves it.
         </p>
         <input
           type="file"
@@ -2070,7 +2130,11 @@ function JdTab({ campaignId }: { campaignId: string }): ReactNode {
 
       {draft && (
         <Card
-          title={`Extracted draft — version ${draft.version_number}`}
+          title={
+            draft.status === "draft"
+              ? `Check the details — version ${draft.version_number}`
+              : `Job description — version ${draft.version_number}`
+          }
           actions={<Badge tone={toneFor(draft.status)}>{prettify(draft.status)}</Badge>}
         >
           <p className="subtle" style={{ marginTop: 0 }}>
@@ -2139,6 +2203,12 @@ function JdTab({ campaignId }: { campaignId: string }): ReactNode {
                   <strong>Approve JD version</strong>.
                 </p>
               )}
+              {hasTitle && !canApprove && (
+                <p className="subtle" style={{ marginTop: 8 }}>
+                  <Lock size={14} aria-hidden="true" className="inline-icon" />
+                  Next: a Recruiter Admin opens this job and approves the JD. It shows on their Approvals page.
+                </p>
+              )}
             </>
           ) : (
             <dl className="kv">
@@ -2154,7 +2224,7 @@ function JdTab({ campaignId }: { campaignId: string }): ReactNode {
           )}
         </Card>
       )}
-    </>
+    </div>
   );
 }
 
@@ -2164,18 +2234,24 @@ function FormTab({ campaignId }: { campaignId: string }): ReactNode {
   const { hasPermission, canAccessCampaign } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [comp, setComp] = useState(false);
-  const [formId, setFormId] = useState<string | null>(null);
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const [fields, setFields] = useState<string[]>([]);
 
   const assigned = canAccessCampaign(campaignId);
   const canEdit = hasPermission("campaign.edit") && assigned;
+  const campaign = useQuery({ queryKey: ["campaign", campaignId], queryFn: () => getCampaign(campaignId) });
+  const setup = useSetupStatus(campaignId);
+  const approved = Boolean(campaign.data?.approved_form_version_id);
+  // A draft made earlier (even in another session) is remembered by the server.
+  const formId = createdId ?? setup.data?.draft_form_version_id ?? null;
 
   const createDraft = useMutation({
     mutationFn: () => createFormDraft(campaignId, comp),
     onSuccess: (v) => {
-      setFormId(v.id);
+      setCreatedId(v.id);
       setFields(v.fields.map((f) => f.label));
-      toast.push("Form draft created", { tone: "ok" });
+      void qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
+      toast.push("Form draft created. Approve it to finish this step.", { tone: "ok" });
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Could not create form."),
   });
@@ -2183,28 +2259,47 @@ function FormTab({ campaignId }: { campaignId: string }): ReactNode {
   const approve = useMutation({
     mutationFn: () => approveForm(formId ?? ""),
     onSuccess: () => {
+      setCreatedId(null);
       void qc.invalidateQueries({ queryKey: ["campaign", campaignId] });
-      toast.push("Form approved (immutable)", { tone: "ok" });
+      toast.push("Application form approved", { tone: "ok" });
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Approval failed."),
   });
 
   return (
-    <>
+    <div id="setup-form" tabIndex={-1} className="scroll-anchor">
       {error && <ErrorNote>{error}</ErrorNote>}
-      <Card title="Application form">
+      <Card
+        title={approved ? "Step 4 · Application form (approved)" : "Step 4 · Create and approve the application form"}
+        description="The questions candidates answer when they apply. Sensitive personal details are never asked for screening."
+        actions={
+          <Badge tone={approved ? "ok" : formId ? "warn" : "neutral"}>
+            {approved ? "Approved" : formId ? "Draft — needs approval" : "Not created"}
+          </Badge>
+        }
+      >
         <AccessNote campaignId={campaignId} permission="campaign.edit" role="Recruiter" />
         <p className="subtle" style={{ marginTop: 0 }}>
-          The form is generated from a safe schema. Protected attributes (age, gender, religion,
-          disability, etc.) can never be added. Compensation fields are off unless explicitly enabled.
+          Built from a safe template. Protected details (age, gender, religion, disability and similar) can
+          never be added. Salary questions are off unless you turn them on.
         </p>
+        {approved && !formId ? (
+          <p className="hint-line">
+            This step is done. Create a new draft only if you need to change the questions.
+          </p>
+        ) : null}
         <div className="checkbox-row">
           <input id="comp" type="checkbox" checked={comp} disabled={!canEdit} onChange={(e) => setComp(e.target.checked)} />
-          <label htmlFor="comp">Enable compensation fields for this campaign</label>
+          <label htmlFor="comp">Ask about current and expected salary</label>
         </div>
         <div className="btn-row">
-          <Button variant="primary" small disabled={!canEdit || createDraft.isPending} onClick={() => createDraft.mutate()}>
-            {createDraft.isPending ? "Creating…" : "Create form draft"}
+          <Button
+            variant={formId ? "default" : "primary"}
+            small
+            disabled={!canEdit || createDraft.isPending}
+            onClick={() => createDraft.mutate()}
+          >
+            {createDraft.isPending ? "Creating…" : formId ? "Create a new draft" : "Create form draft"}
           </Button>
           {formId && (
             <Button variant="accent" small disabled={!canEdit || approve.isPending} onClick={() => approve.mutate()}>
@@ -2218,6 +2313,6 @@ function FormTab({ campaignId }: { campaignId: string }): ReactNode {
           </p>
         )}
       </Card>
-    </>
+    </div>
   );
 }

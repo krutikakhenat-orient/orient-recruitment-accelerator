@@ -1,12 +1,14 @@
+import { Eye, EyeOff } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
 import { apiFetch, ApiError } from "../api/client";
 import { deleteUser, listUsers } from "../api/resources";
 import { useAuth } from "../app/auth-context";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, Empty, ErrorNote, Field, Loading } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorNote, Field, Loading, PageHeader, Tabs } from "../components/ui";
 
 // Human-readable label for a role id.
 const prettyRole = (r: string): string => r.replace(/_/g, " ");
@@ -26,6 +28,8 @@ const ROLES = [
 ];
 
 export function AdminPage(): ReactNode {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") === "create" ? "create" : "users";
   const toast = useToast();
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
@@ -84,14 +88,30 @@ export function AdminPage(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Administration</h1>
-        <p>Create staff accounts with least-privilege roles. There is no public signup.</p>
-      </div>
+      <Link to="/settings" className="back-link">
+        ← Settings
+      </Link>
+      <PageHeader
+        title="Users & roles"
+        description="Create staff accounts with least-privilege roles. There is no public signup."
+      />
+      <Tabs
+        label="Administration sections"
+        value={tab}
+        onChange={(t) => setParams({ tab: t }, { replace: true })}
+        tabs={[
+          { id: "users", label: "Users" },
+          { id: "create", label: "Create a staff user" },
+        ]}
+      />
 
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      <Card title="Create a staff user">
+      {tab === "create" && (
+      <Card
+        title="Create a staff user"
+        description="Add an account for a colleague. They get only the access their roles allow."
+      >
         <div className="grid grid--2">
           <Field label="Email" htmlFor="u-email">
             <input id="u-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -156,16 +176,19 @@ export function AdminPage(): ReactNode {
           {busy ? "Creating…" : "Create user"}
         </Button>
       </Card>
+      )}
 
-      <UsersTable />
+      {tab === "users" && <UsersTable />}
 
-      <Card title="About accounts">
+      {tab === "users" && (
+      <Card title="About accounts" description="A few rules that apply to every account.">
         <ul className="subtle" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.9 }}>
           <li>Each permission only applies to campaigns the user is assigned to (object-level authz).</li>
           <li>System administrators do not get automatic access to candidate content.</li>
           <li>Rule creators cannot be the sole approver; threshold changes use four-eyes.</li>
         </ul>
       </Card>
+      )}
     </>
   );
 }
@@ -215,7 +238,7 @@ function PasswordInput({
           padding: 4,
         }}
       >
-        {visible ? "🙈" : "👁"}
+        {visible ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
       </button>
     </div>
   );

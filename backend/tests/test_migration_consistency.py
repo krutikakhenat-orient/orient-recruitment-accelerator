@@ -72,6 +72,21 @@ def test_model_tables_present() -> None:
         # Employee induction
         "induction_video",
         "induction_completion",
+        # AI voice interview
+        "ai_interview_session",
+        # Long-term automation (migration 0012)
+        "notification_template",
+        "notification_delivery",
+        "sla_policy",
+        "sla_escalation",
+        "offer",
+        "onboarding_case",
+        "onboarding_document",
+        "onboarding_document_flag",
+        "policy_document",
+        "policy_acknowledgement",
+        "assistant_query_log",
+        "interview_confirmation_link",
     }
     assert expected == _model_table_names()
 

@@ -1,4 +1,6 @@
+import { X } from "lucide-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { Link } from "react-router-dom";
 
 /* Small, dependency-free UI primitives built on the design-system CSS. */
 
@@ -31,10 +33,13 @@ export function Button({
 
 export function Card({
   title,
+  description,
   actions,
   children,
 }: {
   title?: ReactNode;
+  /** One plain-language line under the title: what this section is for. */
+  description?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
 }): ReactNode {
@@ -42,12 +47,58 @@ export function Card({
     <section className="card">
       {(title || actions) && (
         <div className="card__head">
-          {title ? <h2 style={{ margin: 0 }}>{title}</h2> : <span />}
+          <div>
+            {title ? <h2 style={{ margin: 0 }}>{title}</h2> : <span />}
+            {description && <p className="card__desc">{description}</p>}
+          </div>
           {actions}
         </div>
       )}
       {children}
     </section>
+  );
+}
+
+/* A small, muted explanation line (what a section or a button is for). */
+export function Hint({ children }: { children: ReactNode }): ReactNode {
+  return <p className="hint-line">{children}</p>;
+}
+
+/* A button with its own one-line explanation underneath, so no action is a mystery. The
+   explanation is also exposed as the button's accessible description. */
+export function Action({
+  label,
+  hint,
+  onClick,
+  variant = "default",
+  disabled,
+  busy,
+  small,
+}: {
+  label: ReactNode;
+  hint: string;
+  onClick: () => void;
+  variant?: Variant;
+  disabled?: boolean;
+  busy?: boolean;
+  small?: boolean;
+}): ReactNode {
+  const hintId = `hint-${hint.replace(/[^a-z0-9]+/gi, "-").toLowerCase().slice(0, 40)}`;
+  return (
+    <div className="action">
+      <Button
+        variant={variant}
+        {...(small !== undefined ? { small } : {})}
+        disabled={disabled || busy}
+        onClick={onClick}
+        aria-describedby={hintId}
+      >
+        {busy ? "Working…" : label}
+      </Button>
+      <span id={hintId} className="action__hint">
+        {hint}
+      </span>
+    </div>
   );
 }
 
@@ -149,7 +200,7 @@ export function Modal({
         <div className="modal__head">
           <h2 style={{ margin: 0 }}>{title}</h2>
           <Button variant="ghost" small onClick={onClose} aria-label="Close">
-            ✕
+            <X size={14} aria-hidden="true" className="inline-icon" />
           </Button>
         </div>
         <div className="modal__body">{children}</div>
@@ -189,7 +240,7 @@ export function Drawer({
             {subtitle && <div className="subtle" style={{ marginTop: 2 }}>{subtitle}</div>}
           </div>
           <Button variant="ghost" small onClick={onClose} aria-label="Close panel">
-            ✕
+            <X size={14} aria-hidden="true" className="inline-icon" />
           </Button>
         </div>
         <div className="drawer__body">{children}</div>
@@ -234,6 +285,17 @@ export function MatchBar({
 /* Map a backend status/recommendation string to a badge tone. */
 export function toneFor(status: string): Tone {
   const s = status.toLowerCase();
+  // Specific workflow statuses first (message, SLA, offer, joining, document, integration).
+  if (/^(on_track|accepted|joined|ready_to_join|live|sent|done)$/.test(s)) return "ok";
+  if (/^(overdue|declined|failed|withdrawn)$/.test(s)) return "danger";
+  if (
+    /^(at_risk|unconfigured|not_configured|drafted|documents_pending|correction_requested|missing|mismatch|needs_details|blocked|reschedule_requested)$/.test(
+      s,
+    )
+  )
+    return "warn";
+  if (/^(simulated|issued|documents_in_review|submitted|current|answered)$/.test(s)) return "info";
+  if (/^(paused|planned|skipped|upcoming|requested|waived|none)$/.test(s)) return "neutral";
   if (/(approved|clean|selected|eligible|pass|confirmed|ready|completed|active|recommended_for)/.test(s))
     return "ok";
   if (/(reject|infected|not_confirmed|fail|cancelled|withdrawn|expired|denied)/.test(s))
@@ -248,4 +310,113 @@ export function prettify(value: string): string {
   return value
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/* ---------- Page-level building blocks (shared structure for every page) ---------- */
+
+/* Standard page header: title, one-line purpose, optional actions. Same on every page. */
+export function PageHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+}): ReactNode {
+  return (
+    <div className="page-head">
+      <div>
+        <h1>{title}</h1>
+        {description && <p>{description}</p>}
+      </div>
+      {actions && <div className="page-head__actions">{actions}</div>}
+    </div>
+  );
+}
+
+export interface TabItem {
+  id: string;
+  label: ReactNode;
+}
+
+/* Accessible tab strip (module sub-navigation). Arrow keys move between tabs. */
+export function Tabs({
+  tabs,
+  value,
+  onChange,
+  label = "Sections",
+}: {
+  tabs: TabItem[];
+  value: string;
+  onChange: (id: string) => void;
+  label?: string;
+}): ReactNode {
+  const move = (index: number, delta: number): void => {
+    const next = tabs[(index + delta + tabs.length) % tabs.length];
+    if (next) onChange(next.id);
+  };
+  return (
+    <div className="tabs" role="tablist" aria-label={label}>
+      {tabs.map((t, i) => (
+        <button
+          key={t.id}
+          role="tab"
+          type="button"
+          className="tab"
+          aria-selected={t.id === value}
+          tabIndex={t.id === value ? 0 : -1}
+          onClick={() => onChange(t.id)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowRight") move(i, 1);
+            if (e.key === "ArrowLeft") move(i, -1);
+          }}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* Slim informational bar. */
+export function Banner({ icon, children }: { icon?: ReactNode; children: ReactNode }): ReactNode {
+  return (
+    <div className="banner" role="note">
+      {icon}
+      <div>{children}</div>
+    </div>
+  );
+}
+
+/* Directory-style link card with icon, title and one-line description. */
+export function DirectoryCard({
+  to,
+  icon,
+  title,
+  description,
+}: {
+  to: string;
+  icon: ReactNode;
+  title: string;
+  description: string;
+}): ReactNode {
+  return (
+    <Link className="dir-card" to={to}>
+      <span className="todo__icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span>
+        <div className="dir-card__title">{title}</div>
+        <div className="dir-card__desc">{description}</div>
+      </span>
+    </Link>
+  );
+}
+
+
+
+/* A status shown as colour AND words (never colour alone). */
+export function StatusBadge({ status, label }: { status: string; label?: string }): ReactNode {
+  return <Badge tone={toneFor(status)}>{label ?? prettify(status)}</Badge>;
 }

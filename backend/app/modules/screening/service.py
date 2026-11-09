@@ -968,6 +968,16 @@ def auto_progress_to_interview(
         record_walk_in_interview(
             db, actor=_interview_system_actor(application), application=application
         )
-        return True
     except Exception:  # noqa: BLE001 - progression is best-effort; never break submission
         return False
+
+    # Offer the optional AI voice interview: creates only a cheap PENDING draft (no network,
+    # no candidate contact). A human plans, reviews and approves before any link exists. A
+    # no-op when the feature is off, and it can never affect the progression result.
+    from app.core.config import get_settings
+    from app.modules.ai_interviews import service as ai_interview_service
+
+    ai_interview_service.draft_after_screening(
+        db, settings=get_settings(), application=application
+    )
+    return True

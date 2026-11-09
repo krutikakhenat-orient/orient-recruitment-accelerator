@@ -554,3 +554,15 @@ quarantined. (AC-18, AC-19)
 The product is not claimed to be automatically legally compliant and is not claimed to be
 risk-free. No external product capabilities, legal conclusions, credentials, URLs, APIs, or
 business rules are invented. No sample candidates are presented as real people.
+
+---
+
+## Long-term plan (post-MVP)
+
+Requirements 17–35 (recruitment and onboarding automation: reminders, interview
+confirmation, SLA monitoring, scheduling, feedback summarisation, offer follow-up, document
+collection and AI-assisted verification, pre-joining and welcome communication, policy / SOP
+distribution, HR assistant, and the sourcing, ZingHR and avatar-induction feasibility
+tracks) are in [requirements-long-term.md](requirements-long-term.md). They extend this
+document and do not change the MVP acceptance gate (AC-01..AC-25). The business view,
+functional and non-functional requirements are in [docs/BRD.md](../../../docs/BRD.md).

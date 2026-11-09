@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -38,6 +39,11 @@ class WaitlistRecordRead(BaseModel):
     eligibility_state: str
 
 
+class WaitlistEntryRead(WaitlistRecordRead):
+    candidate_name: str
+    created_at: dt.datetime
+
+
 class ReevaluateRequest(BaseModel):
     application_id: uuid.UUID
     trigger: ReevaluationTrigger
@@ -48,6 +54,24 @@ class ReevaluateResponse(BaseModel):
     new_run_id: uuid.UUID
     previous_run_id: uuid.UUID | None
     result_changed: bool
+
+
+@router.get("", response_model=list[WaitlistEntryRead])
+def list_waitlist(
+    campaign_id: uuid.UUID = Query(),
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> list[WaitlistEntryRead]:
+    """Candidates on the waitlist for one campaign (needs waitlist.manage for that campaign)."""
+    require_campaign_permission(actor, Permission.WAITLIST_MANAGE, campaign_id)
+    return [
+        WaitlistEntryRead(
+            id=r.id, application_id=r.application_id, campaign_id=r.campaign_id,
+            reason=r.reason, status=r.status, eligibility_state=r.eligibility_state,
+            candidate_name=name, created_at=r.created_at,
+        )
+        for r, name in service.list_for_campaign(db, actor.organisation_id, campaign_id)
+    ]
 
 
 @router.post("", response_model=WaitlistRecordRead, status_code=201)

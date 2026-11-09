@@ -1,0 +1,7 @@
+{
+  "app": "python app.py",
+  "watch": { "include": ["**"], "exclude": ["build", "cdk.out", "__pycache__"] },
+  "context": {
+    "@aws-cdk/core:newStyleStackSynthesis": true
+  }
+}

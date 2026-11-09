@@ -1,3 +1,4 @@
+import { FileText, Lock, Phone } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 
@@ -126,10 +127,10 @@ export function CandidateScorecardDrawer({
       {/* Action tabs */}
       <div className="btn-row" style={{ margin: "16px 0 12px" }}>
         <Button variant={tab === "resume" ? "primary" : "default"} small onClick={() => setTab("resume")}>
-          📄 View Resume
+          <FileText size={14} aria-hidden="true" className="inline-icon" />View Resume
         </Button>
         <Button variant={tab === "contact" ? "primary" : "default"} small onClick={() => setTab("contact")}>
-          📞 View Contact Details
+          <Phone size={14} aria-hidden="true" className="inline-icon" />View Contact Details
         </Button>
       </div>
 
@@ -275,7 +276,7 @@ export function CandidateScorecardDrawer({
           {contactError && <ErrorNote>{contactError}</ErrorNote>}
           {!canViewPii ? (
             <p className="subtle">
-              🔒 Revealing contact details needs the <strong>candidate.view_pii</strong> permission.
+              <Lock size={14} aria-hidden="true" className="inline-icon" />Revealing contact details needs the <strong>candidate.view_pii</strong> permission.
               Your role can see a masked profile only.
             </p>
           ) : reveal.data ? (

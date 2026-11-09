@@ -1,0 +1,4 @@
+# Extra packages for the v2 (Aurora Data API) Lambda package. Installed with --no-deps (both are pure Python;
+# boto3 and SQLAlchemy come from the backend's own pinned dependencies / the Lambda runtime).
+sqlalchemy-aurora-data-api==0.5.0
+aurora-data-api==0.5.0

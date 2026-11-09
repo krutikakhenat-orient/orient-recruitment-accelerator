@@ -20,7 +20,8 @@ class TokenPair(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    # Optional: the browser app sends no body and relies on the HttpOnly cookie instead.
+    refresh_token: str | None = None
 
 
 class UserCreate(BaseModel):

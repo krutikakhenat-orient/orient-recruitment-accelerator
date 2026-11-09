@@ -42,6 +42,20 @@ class Settings(BaseSettings):
     # production-like environments.
     database_url: str = "postgresql+psycopg://ora:ora@localhost:5432/ora"
 
+    # Serverless (Lambda) hosting: every invocation may run in a fresh container, so a
+    # per-process connection pool only wastes database connections. NullPool opens and
+    # closes a connection per use. ``db_connect_timeout_seconds`` is generous because an
+    # auto-paused Aurora Serverless v2 cluster can take ~15s to resume on first connect.
+    db_null_pool: bool = False
+    db_connect_timeout_seconds: int = 30
+
+    # --- Object storage ---
+    # When set, files (resumes, JDs, induction video) are stored in this private S3 bucket.
+    # When unset, the in-memory / local-disk store is used (local dev and tests).
+    s3_bucket: str | None = None
+    # Lifetime of the short-lived signed link used to play the induction video.
+    signed_url_ttl_seconds: int = 900
+
     # --- Security / tokens ---
     jwt_secret: str = _DEV_ONLY_SECRET
     jwt_algorithm: str = "HS256"
@@ -65,6 +79,52 @@ class Settings(BaseSettings):
     # --- Feature flags ---
     llm_adapter_enabled: bool = False  # AI is advisory-only and off by default
 
+    # --- AI voice interview (interview-agent) ---
+    # Off by default (responsible-ai.md): the platform runs fully without the agent. The
+    # agent is advisory only; it never changes an application's state or produces a verdict.
+    ai_interview_enabled: bool = False
+    # How the backend reaches the agent: "http" (local `interview-agent` on a URL),
+    # "agentcore" (deployed on Amazon Bedrock AgentCore Runtime), or "fake" (tests only).
+    ai_interview_agent_mode: str = "http"
+    ai_interview_agent_base_url: str = "http://localhost:8080"
+    # URL the CANDIDATE'S BROWSER opens for the live audio socket in "http" mode. In
+    # "agentcore" mode a short-lived SigV4 pre-signed URL is minted instead.
+    ai_interview_agent_ws_url: str = "ws://localhost:8080/ws"
+    ai_interview_agentcore_arn: str | None = None
+    ai_interview_agentcore_region: str = "ap-south-1"
+    # Shared secret the agent uses to HMAC-sign the result webhook. Required when enabled.
+    ai_interview_webhook_secret: str | None = None
+    ai_interview_webhook_tolerance_seconds: int = 300
+    # Candidate link lifetime once a human has approved the questions.
+    ai_interview_link_ttl_seconds: int = 60 * 60 * 24 * 7
+    ai_interview_max_starts: int = 3
+    # Total interview attempts per application, including retries a recruiter offers after
+    # an attempt ended early. Each attempt is a separate record; earlier ones are kept.
+    ai_interview_max_attempts: int = 3
+    ai_interview_agent_timeout_seconds: int = 60
+
+    # --- Notifications (email / WhatsApp) ---
+    # Every channel is "unconfigured" by default so the product never claims a message was
+    # sent when no provider exists. Modes:
+    #   unconfigured - nothing is sent; the message is recorded with a manual-send fallback.
+    #   simulate     - local demo: the message is recorded as "simulated" (no real delivery).
+    #   smtp         - (email only) deliver through an SMTP server, e.g. the MailHog dev sandbox.
+    # WhatsApp has no live provider yet: it supports "unconfigured" and "simulate" only
+    # (a WhatsApp Business provider account and approved templates are needed first).
+    notification_email_mode: str = "unconfigured"
+    notification_whatsapp_mode: str = "unconfigured"
+    notification_smtp_host: str = "localhost"
+    notification_smtp_port: int = 1025
+    notification_sender_address: str = "no-reply@orient.local"
+    # Public link lifetime for candidate interview-confirmation links.
+    confirmation_link_ttl_hours: int = 72
+
+    # --- Campaign publication ---
+    # Organisation privacy-notice version attached to a campaign when HR opens it for
+    # applications and none was set explicitly. Candidates consent against this version, so
+    # changing the notice text should bump this value (the consent record stores it).
+    default_privacy_notice_version: str = "v1"
+
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
@@ -87,6 +147,14 @@ class Settings(BaseSettings):
             problems.append("ORA_CORS_ALLOWED_ORIGINS must not include localhost in production.")
         if self.database_url.startswith("sqlite"):
             problems.append("SQLite is not permitted in production; use PostgreSQL.")
+        if self.ai_interview_enabled:
+            if self.ai_interview_agent_mode == "fake":
+                problems.append("ORA_AI_INTERVIEW_AGENT_MODE=fake is not allowed in production.")
+            if not self.ai_interview_webhook_secret or len(self.ai_interview_webhook_secret) < 32:
+                problems.append(
+                    "ORA_AI_INTERVIEW_WEBHOOK_SECRET must be set (>=32 chars) when the "
+                    "AI interview is enabled."
+                )
         if problems:
             raise RuntimeError(
                 "Insecure configuration for a production-like environment: "

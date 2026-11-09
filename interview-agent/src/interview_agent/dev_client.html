@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interview agent: local test client (SYNTHETIC DATA ONLY)</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 900px; margin: 1.5rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.3rem; }
+  label { display: block; font-weight: 600; margin-top: .8rem; }
+  textarea, input[type=text] { width: 100%; box-sizing: border-box; font: inherit; padding: .4rem; }
+  textarea { min-height: 5rem; }
+  button { font: inherit; padding: .5rem 1rem; margin: .6rem .4rem .6rem 0; cursor: pointer; }
+  button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid #1a56db; outline-offset: 2px; }
+  #log { border: 1px solid #888; padding: .6rem; min-height: 14rem; max-height: 26rem; overflow: auto; background: #fafafa; }
+  .agent::before { content: "Agent: "; font-weight: 700; }
+  .you::before { content: "You: "; font-weight: 700; }
+  .sys { color: #555; font-style: italic; }
+  .warn { background: #fff4d6; border: 1px solid #c58b00; padding: .5rem; }
+  #status { font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Interview agent: local test client</h1>
+<p class="warn">Local development only. Use synthetic job descriptions and resumes. Do not paste real candidate data.
+Use Chrome or Edge, and headphones, to avoid the agent hearing itself.</p>
+
+<label for="role">Role title</label>
+<input id="role" type="text" value="Synthetic Backend Engineer">
+<label for="jd">Job description (synthetic)</label>
+<textarea id="jd">Build and maintain REST APIs in Python with FastAPI. Strong PostgreSQL skills. Experience with AWS and automated testing.</textarea>
+<label for="skills">Must-have skills (comma separated)</label>
+<input id="skills" type="text" value="Python, PostgreSQL, AWS">
+<label for="resume">Resume text (synthetic)</label>
+<textarea id="resume">SYNTHETIC RESUME. Four years building Python services with FastAPI and PostgreSQL. Deployed services on AWS Lambda. Wrote pytest suites.</textarea>
+
+<button id="start">Prepare and start interview</button>
+<button id="end" disabled>End interview</button>
+<span id="status" role="status" aria-live="polite">Idle</span>
+
+<h2 style="font-size:1.05rem">Conversation</h2>
+<div id="log" aria-live="polite"></div>
+<label for="typed">Type an answer instead of speaking (optional)</label>
+<input id="typed" type="text" disabled>
+<button id="send" disabled>Send</button>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const RATE = 16000;
+let ws, ctx, micStream, workletNode, nextPlayTime = 0, playing = [];
+
+function line(cls, text) {
+  const d = document.createElement("div");
+  d.className = cls; d.textContent = text;
+  $("log").appendChild(d); $("log").scrollTop = $("log").scrollHeight;
+}
+function status(t) { $("status").textContent = t; }
+
+async function invoke(body) {
+  const r = await fetch("/invocations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error((j.error && j.error.code) || r.status);
+  return j;
+}
+
+const WORKLET = `
+class Pcm16 extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = []; }
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (ch) {
+      for (let i = 0; i < ch.length; i++) this.buf.push(Math.max(-1, Math.min(1, ch[i])));
+      while (this.buf.length >= 1600) {
+        const out = new Int16Array(1600);
+        for (let i = 0; i < 1600; i++) out[i] = this.buf[i] * 32767;
+        this.buf = this.buf.slice(1600);
+        this.port.postMessage(out.buffer, [out.buffer]);
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("pcm16", Pcm16);`;
+
+function playPcm(arrayBuffer) {
+  const i16 = new Int16Array(arrayBuffer);
+  if (!i16.length) return;
+  const f32 = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+  const buf = ctx.createBuffer(1, f32.length, RATE);
+  buf.copyToChannel(f32, 0);
+  const src = ctx.createBufferSource();
+  src.buffer = buf; src.connect(ctx.destination);
+  nextPlayTime = Math.max(nextPlayTime, ctx.currentTime + 0.05);
+  src.start(nextPlayTime); nextPlayTime += buf.duration;
+  playing.push(src); src.onended = () => { playing = playing.filter((s) => s !== src); };
+}
+function clearPlayback() { playing.forEach((s) => { try { s.stop(); } catch (e) {} }); playing = []; nextPlayTime = 0; }
+
+async function startMic() {
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
+  await ctx.audioWorklet.addModule(url);
+  const source = ctx.createMediaStreamSource(micStream);
+  workletNode = new AudioWorkletNode(ctx, "pcm16");
+  workletNode.port.onmessage = (e) => { if (ws && ws.readyState === 1) ws.send(e.data); };
+  source.connect(workletNode);
+}
+
+function cleanup() {
+  clearPlayback();
+  if (micStream) micStream.getTracks().forEach((t) => t.stop());
+  if (ctx) ctx.close();
+  micStream = ctx = workletNode = null;
+  $("start").disabled = false; $("end").disabled = true; $("typed").disabled = true; $("send").disabled = true;
+}
+
+$("start").onclick = async () => {
+  $("start").disabled = true; $("log").textContent = "";
+  try {
+    status("Planning questions...");
+    const interview_id = crypto.randomUUID();
+    const skills = $("skills").value.split(",").map((s) => s.trim()).filter(Boolean);
+    const qs = await invoke({
+      action: "plan_questions", interview_id,
+      job_descriptions: [{ jd_id: "jd-local", title: $("role").value, text: $("jd").value, must_have_skills: skills }],
+      resume: { candidate_ref: "cand-local", text: $("resume").value },
+    });
+    line("sys", "Questions (" + qs.generated_by + "): " + qs.questions.map((q) => q.text).join(" | "));
+    qs.approved = true; qs.approved_by = "local-dev";  // a recruiter approves in the real flow
+    const prep = await invoke({
+      action: "prepare_session", interview_id, question_set: qs, role_title: $("role").value,
+      consent_notice_version: "local-dev", consent_given: true,
+    });
+    ctx = new AudioContext({ sampleRate: RATE });
+    await ctx.resume();
+    await startMic();
+    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => ws.send(JSON.stringify({ type: "start", interview_id, join_token: prep.join_token }));
+    ws.onmessage = (e) => {
+      if (typeof e.data !== "string") return playPcm(e.data);
+      const m = JSON.parse(e.data);
+      if (m.type === "ready") { status("Live: speak when the agent finishes"); $("end").disabled = false; $("typed").disabled = !m.text_input; $("send").disabled = !m.text_input; }
+      else if (m.type === "agent_text") line("agent", m.text);
+      else if (m.type === "transcript" && m.final) line("you", m.text);
+      else if (m.type === "clear") clearPlayback();
+      else if (m.type === "warning") line("sys", "Warning: " + m.code);
+      else if (m.type === "error") { line("sys", "Error: " + m.code); status("Error"); }
+      else if (m.type === "ended") { status("Ended (" + m.reason + "). Saved to the out folder."); line("sys", "Interview ended: " + m.reason); }
+    };
+    ws.onclose = () => { status("Disconnected"); cleanup(); };
+  } catch (err) {
+    line("sys", "Failed: " + err.message); status("Failed"); cleanup();
+  }
+};
+$("end").onclick = () => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "end" })); };
+$("send").onclick = () => {
+  const t = $("typed").value.trim();
+  if (t && ws && ws.readyState === 1) { ws.send(JSON.stringify({ type: "utterance", text: t })); $("typed").value = ""; }
+};
+$("typed").addEventListener("keydown", (e) => { if (e.key === "Enter") $("send").click(); });
+</script>
+</body>
+</html>

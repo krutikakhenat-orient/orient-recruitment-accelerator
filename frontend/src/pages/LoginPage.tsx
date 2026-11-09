@@ -46,21 +46,20 @@ export function LoginPage(): ReactNode {
   return (
     <div className="auth-wrap">
       <section className="auth-hero" aria-hidden="true">
-        <Logo size={64} title="Orient Recruitment Accelerator" />
-        <h1 style={{ marginTop: 20 }}>Orient Recruitment Accelerator</h1>
-        <p style={{ color: "#cfe0f2", maxWidth: 440 }}>
-          A secure, explainable platform for recruitment campaigns and candidate screening — with
-          deterministic rules, human-approved decisions, and a full audit trail.
+        <Logo size={56} title="Orient Recruitment Accelerator" />
+        <p className="auth-eyebrow">Recruitment operating system</p>
+        <h1>Hire with evidence, not guesswork.</h1>
+        <p className="auth-lede">
+          A secure, explainable platform for recruitment campaigns and candidate screening, with
+          deterministic rules, human-approved decisions and a full audit trail.
         </p>
         <ul>
-          <li>Project &amp; campaign management with versioned JDs and rules</li>
-          <li>Deterministic, explainable screening — never auto-rejects</li>
+          <li>Versioned job descriptions, rules and thresholds</li>
+          <li>Explainable screening that never auto-rejects</li>
           <li>Human review, interviews, waitlist and talent pool</li>
           <li>Privacy, retention and governance built in</li>
         </ul>
-      </section>
-
-      <section className="auth-panel">
+      </section>      <section className="auth-panel">
         <div className="auth-card">
           <h1 id="login-heading">Sign in</h1>
           <p className="subtle">Use your staff account to continue.</p>
@@ -90,7 +89,7 @@ export function LoginPage(): ReactNode {
                 {...register("password", { required: "Password is required" })}
               />
             </Field>
-            <Button variant="primary" type="submit" disabled={isSubmitting} style={{ width: "100%" }}>
+            <Button variant="primary" type="submit" disabled={isSubmitting} className="btn--block">
               {isSubmitting ? "Signing in…" : "Sign in"}
             </Button>
           </form>

@@ -10,7 +10,18 @@ import {
   markInductionComplete,
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
-import { Badge, Button, Card, Empty, ErrorNote, Loading, MatchBar } from "../components/ui";
+import {
+  PageHeader,
+  Badge,
+  Button,
+  Card,
+  Empty,
+  ErrorNote,
+  Loading,
+  MatchBar,
+  Tabs,
+} from "../components/ui";
+import { AssistantBox, PolicyLibrary } from "./PoliciesPage";
 
 /* The employee induction dashboard. It renders EXACTLY two features and nothing else from
    the staff portal:
@@ -22,20 +33,35 @@ import { Badge, Button, Card, Empty, ErrorNote, Loading, MatchBar } from "../com
 export function EmployeePage(): ReactNode {
   const { token } = useAuth();
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState("induction");
 
   const status = useQuery({ queryKey: ["induction-status"], queryFn: getInductionStatus });
 
   return (
     <>
-      <div className="page-head">
-        <h1>Welcome to your induction</h1>
-        <p>Watch the induction video, then download your completion certificate.</p>
-      </div>
+      <PageHeader
+        title="Welcome to your first days"
+        description="Watch the induction video and download your certificate. Read the company policies, or ask HR a question."
+      />
+      <Tabs
+        label="Your first days"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: "induction", label: "Induction" },
+          { id: "policies", label: "Policies & guides" },
+          { id: "ask", label: "Ask HR" },
+        ]}
+      />
+      {tab === "policies" && <PolicyLibrary />}
+      {tab === "ask" && <AssistantBox />}
 
-      {status.isLoading && <Loading label="Loading your induction…" />}
-      {status.error && <ErrorNote>Could not load your induction. Please try again.</ErrorNote>}
+      {tab === "induction" && status.isLoading && <Loading label="Loading your induction…" />}
+      {tab === "induction" && status.error && (
+        <ErrorNote>Could not load your induction. Please try again.</ErrorNote>
+      )}
 
-      {status.data && (
+      {tab === "induction" && status.data && (
         <>
           <InductionVideoCard
             token={token}
@@ -170,6 +196,7 @@ function InductionVideoCard({
   return (
     <Card
       title="Watch induction video"
+      description="Introduces the company and how things work. Watch it fully; skipping ahead is not possible."
       actions={
         completed ? (
           <Badge tone="ok">Completed</Badge>
@@ -331,6 +358,7 @@ function CertificateCard({
   return (
     <Card
       title="Certificate"
+      description="Proof that you completed the induction. It unlocks after the video is fully watched."
       actions={completed ? <Badge tone="ok">Unlocked</Badge> : <Badge tone="warn">Locked</Badge>}
     >
       {!completed ? (

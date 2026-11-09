@@ -19,6 +19,14 @@ class InductionVideoRead(BaseModel):
     content_type: str
 
 
+class InductionVideoUrl(BaseModel):
+    """Short-lived signed link for playing the video straight from private storage."""
+
+    url: str
+    content_type: str
+    expires_in_seconds: int
+
+
 class InductionStatusRead(BaseModel):
     """Whether a video exists for the org and whether the current user finished it."""
 

@@ -31,6 +31,11 @@ os.environ.setdefault("ORA_JWT_SECRET", "local-dev-secret-change-me-32-character
 # Interview Panel's Resume tab shows "No resume available" for earlier applicants.
 _OBJ_DIR = pathlib.Path(__file__).resolve().parent / "local_dev_objectstore"
 os.environ.setdefault("ORA_LOCAL_OBJECT_STORE_DIR", str(_OBJ_DIR))
+# Local demo: email and WhatsApp messages are RECORDED and labelled "simulated" so the whole
+# candidate journey can be followed without any provider. Nothing is actually delivered.
+# To use a real sandbox instead, set ORA_NOTIFICATION_EMAIL_MODE=smtp (MailHog works).
+os.environ.setdefault("ORA_NOTIFICATION_EMAIL_MODE", "simulate")
+os.environ.setdefault("ORA_NOTIFICATION_WHATSAPP_MODE", "simulate")
 
 import uvicorn  # noqa: E402
 

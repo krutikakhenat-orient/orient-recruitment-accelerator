@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import os
+import pathlib
 import uuid
 
 from sqlalchemy.orm import Session
@@ -232,13 +234,51 @@ def seed_developer_video(db: Session, organisation_id: uuid.UUID) -> InductionVi
       the key need to change.
     """
     key = _video_storage_key(organisation_id)
-    if not default_object_store.exists(key):
-        default_object_store.put(key, _PLACEHOLDER_MP4, _DEV_VIDEO_CONTENT_TYPE)
-    return repo.upsert_video(
+    configured = _configured_video()
+    if configured is not None:
+        # A real video was configured: always (re)write it so changing the file and
+        # reseeding takes effect. Idempotent for an unchanged file.
+        data, content_type = configured
+        default_object_store.put(key, data, content_type)
+        description = "Employee induction video."
+    else:
+        content_type = _DEV_VIDEO_CONTENT_TYPE
+        description = _DEV_VIDEO_DESCRIPTION
+        if not default_object_store.exists(key):
+            default_object_store.put(key, _PLACEHOLDER_MP4, content_type)
+    video = repo.upsert_video(
         db,
         organisation_id=organisation_id,
         title=_DEV_VIDEO_TITLE,
-        description=_DEV_VIDEO_DESCRIPTION,
+        description=description,
         storage_key=key,
-        content_type=_DEV_VIDEO_CONTENT_TYPE,
+        content_type=content_type,
     )
+    if configured is not None:
+        # upsert reuses an existing row as-is; keep its metadata in step with the blob.
+        video.content_type = content_type
+        video.description = description
+    return video
+
+
+_VIDEO_CONTENT_TYPES = {".mp4": "video/mp4", ".webm": "video/webm"}
+
+
+def _configured_video() -> tuple[bytes, str] | None:
+    """Load the real induction video named by ``ORA_INDUCTION_VIDEO_PATH``, if set.
+
+    Returns ``(bytes, content_type)`` or ``None`` to fall back to the placeholder.
+    Security: the path comes from operator-controlled environment config, never from a
+    request. Only .mp4/.webm are accepted, so an arbitrary file cannot be served.
+    A set-but-unusable path raises rather than silently serving the blank placeholder.
+    """
+    raw = os.environ.get("ORA_INDUCTION_VIDEO_PATH")
+    if not raw:
+        return None
+    path = pathlib.Path(raw)
+    content_type = _VIDEO_CONTENT_TYPES.get(path.suffix.lower())
+    if content_type is None:
+        raise ValidationError("ORA_INDUCTION_VIDEO_PATH must be a .mp4 or .webm file")
+    if not path.is_file():
+        raise ValidationError(f"ORA_INDUCTION_VIDEO_PATH not found: {path.name}")
+    return path.read_bytes(), content_type

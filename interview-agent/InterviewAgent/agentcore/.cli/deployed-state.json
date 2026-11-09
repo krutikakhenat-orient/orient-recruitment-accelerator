@@ -1,0 +1,17 @@
+{
+  "targets": {
+    "default": {
+      "resources": {
+        "runtimes": {
+          "interview_agent": {
+            "runtimeId": "InterviewAgent_interview_agent-05wWzf6aMK",
+            "runtimeArn": "arn:aws:bedrock-agentcore:ap-south-1:771834037911:runtime/InterviewAgent_interview_agent-05wWzf6aMK",
+            "roleArn": "arn:aws:iam::771834037911:role/AgentCore-InterviewAgent--ApplicationAgentInterview-HWkbTkLLOAgO"
+          }
+        },
+        "stackName": "AgentCore-InterviewAgent-default",
+        "deployHash": "a409316dec8c9eb7"
+      }
+    }
+  }
+}

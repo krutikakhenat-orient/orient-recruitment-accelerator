@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { getAccessToken } from "../api/client";
+import { getAccessToken, refreshSession } from "../api/client";
 import { type Actor, fetchMe, login as apiLogin, logout as apiLogout } from "../api/auth";
 
 interface AuthState {
@@ -26,20 +26,30 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+// Candidate-facing pages never use a staff session, so they skip session restoration.
+function isPublicPath(): boolean {
+  const p = window.location.pathname;
+  return p.startsWith("/apply") || p.startsWith("/ai-interview");
+}
+
 export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
   const [actor, setActor] = useState<Actor | null>(null);
   // While a token exists but the actor has not been resolved yet, auth is still being
   // established — we must not treat the user as logged out (which would bounce a deep link,
   // e.g. the Excel "Download Resume" URL, to the login page even though the session is valid).
-  const [bootstrapping, setBootstrapping] = useState<boolean>(() => getAccessToken() !== null);
+  const [bootstrapping, setBootstrapping] = useState<boolean>(() => !isPublicPath());
 
-  // Restore the signed-in actor on mount when an access token is already present (e.g. the
-  // SPA is reloaded, or a deep link is opened within a live session). Without this, actor
-  // starts null and RequireAuth would redirect to login even though the token is valid.
+  // Restore the signed-in actor on mount. The access token is memory-only, so after a hard
+  // refresh it is gone; the HttpOnly refresh cookie lets us quietly get a new one. Without
+  // this the page reloaded to the login screen every time. Public candidate pages skip it.
   useEffect(() => {
-    if (getAccessToken() === null) return;
+    if (isPublicPath()) return;
     let cancelled = false;
-    fetchMe()
+    const restore = async (): Promise<Actor | null> => {
+      if (getAccessToken() === null && !(await refreshSession())) return null;
+      return fetchMe();
+    };
+    restore()
       .then((me) => {
         if (!cancelled) setActor(me);
       })

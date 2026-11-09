@@ -22,6 +22,7 @@ from app.core.correlation import get_correlation_id, new_correlation_id, set_cor
 from app.core.errors import AppError, error_envelope
 from app.core.logging import configure_logging, get_logger
 from app.db.session import engine
+from app.modules.ai_interviews.router import router as ai_interviews_router
 from app.modules.applications.router import public_router as applications_public_router
 from app.modules.applications.router import router as applications_router
 from app.modules.assessments.router import router as assessments_router
@@ -34,14 +35,23 @@ from app.modules.documents.router import router as documents_router
 from app.modules.forms.router import router as forms_router
 from app.modules.identity.router import router as identity_router
 from app.modules.induction.router import router as induction_router
+from app.modules.integrations.router import router as integrations_router
+from app.modules.interview_confirmations.router import router as interview_confirmations_router
 from app.modules.interviews.router import router as interviews_router
 from app.modules.job_descriptions.router import router as jd_router
+from app.modules.journey.router import router as journey_router
+from app.modules.notifications.router import router as notifications_router
+from app.modules.onboarding.router import offers_router
+from app.modules.onboarding.router import router as onboarding_router
+from app.modules.policies.router import assistant_router
+from app.modules.policies.router import router as policies_router
 from app.modules.privacy.router import router as privacy_router
 from app.modules.projects.router import router as projects_router
 from app.modules.reporting.router import router as reports_router
 from app.modules.review.router import router as reviews_router
 from app.modules.rules.router import router as rules_router
 from app.modules.screening.router import router as screening_router
+from app.modules.sla.router import router as sla_router
 from app.modules.talent_pool.router import router as talent_pool_router
 from app.modules.waitlist.router import router as waitlist_router
 
@@ -178,12 +188,23 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(screening_router)
     app.include_router(reviews_router)
     app.include_router(interviews_router)
+    app.include_router(ai_interviews_router)
     app.include_router(assessments_router)
     app.include_router(decisions_router)
     app.include_router(waitlist_router)
     app.include_router(talent_pool_router)
     app.include_router(privacy_router)
     app.include_router(reports_router)
+    # Long-term automation modules (all work locally; external connections are placeholders).
+    app.include_router(notifications_router)
+    app.include_router(sla_router)
+    app.include_router(offers_router)
+    app.include_router(onboarding_router)
+    app.include_router(policies_router)
+    app.include_router(assistant_router)
+    app.include_router(interview_confirmations_router)
+    app.include_router(integrations_router)
+    app.include_router(journey_router)
 
 
 def _register_health(app: FastAPI, settings_environment: Environment) -> None:

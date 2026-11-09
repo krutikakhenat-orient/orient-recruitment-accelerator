@@ -12,6 +12,7 @@ import {
 } from "../api/resources";
 import { Logo } from "../components/Logo";
 import { Button, Field } from "../components/ui";
+import { NEXT_FOR_CANDIDATE } from "../lib/guideContent";
 
 /* Public, unauthenticated candidate application.
 
@@ -484,6 +485,12 @@ function ThankYou({ message }: { message: string }): ReactNode {
         <div className="apply-thankyou__badge" aria-hidden="true">✓</div>
         <h1 style={{ marginTop: 8 }}>Thank you for your application</h1>
         <p className="apply-thankyou__lead">{message}</p>
+        <h2 style={{ fontSize: "1rem", marginTop: 18 }}>What happens next</h2>
+        <ol className="next-list">
+          {NEXT_FOR_CANDIDATE.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
         <p className="subtle apply-thankyou__note">
           You can safely close this page; your application has been saved. The hiring team
           will be in touch using the contact details you provided.

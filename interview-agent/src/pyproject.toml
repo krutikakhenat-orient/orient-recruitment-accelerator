@@ -1,0 +1,17 @@
+# Runtime dependencies for the AgentCore CodeZip package (installed as arm64 Linux wheels by
+# `agentcore deploy`). Must match [project].dependencies in ../pyproject.toml; a test enforces this.
+[project]
+name = "interview-agent-runtime"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.115.5",
+  "uvicorn==0.52.4",
+  "websockets==15.0.1",
+  "pydantic==2.14.1",
+  "pydantic-settings==2.14.1",
+  "python-dotenv==1.2.4",
+  "boto3==1.43.125",
+  "amazon-transcribe==0.6.4",
+  "httpx==0.28.1",
+]

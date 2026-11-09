@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { ApiError } from "../api/client";
@@ -12,10 +12,21 @@ import {
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, Empty, ErrorNote, Field, Loading, Modal, prettify, toneFor } from "../components/ui";
+import { Badge, Button, Empty, ErrorNote, Field, Loading, Modal, PageHeader, prettify, toneFor } from "../components/ui";
+import {
+  FilterBar,
+  FilterSelect,
+  ItemCard,
+  ItemGrid,
+  ItemList,
+  ItemRow,
+  MineToggle,
+  ViewSwitcher,
+  useViewMode,
+} from "../components/views";
 
 export function CampaignsPage(): ReactNode {
-  const { hasPermission } = useAuth();
+  const { hasPermission, canAccessCampaign } = useAuth();
   const toast = useToast();
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
@@ -23,53 +34,172 @@ export function CampaignsPage(): ReactNode {
   const campaigns = useQuery({ queryKey: ["campaigns"], queryFn: listCampaigns });
   const canDelete = hasPermission("campaign.edit");
 
+  const [view, setView] = useViewMode("campaigns", "table");
+  const [search, setSearch] = useState("");
+  const [stateFilter, setStateFilter] = useState("");
+  const [mine, setMine] = useState(false);
+
+  const all = useMemo(() => campaigns.data ?? [], [campaigns.data]);
+  const stateOptions = useMemo(
+    () => [...new Set(all.map((c) => c.state))].sort().map((s) => ({ value: s, label: prettify(s) })),
+    [all],
+  );
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return all.filter(
+      (c) =>
+        (!q || c.name.toLowerCase().includes(q) || c.position_title.toLowerCase().includes(q)) &&
+        (!stateFilter || c.state === stateFilter) &&
+        (!mine || canAccessCampaign(c.id)),
+    );
+  }, [all, search, stateFilter, mine, canAccessCampaign]);
+
+  const readiness = (c: Campaign): number =>
+    [
+      c.approved_jd_version_id,
+      c.approved_rule_set_version_id,
+      c.approved_form_version_id,
+      c.active_threshold_version_id,
+      c.privacy_notice_version,
+    ].filter(Boolean).length;
+
+  const applyLink = (c: Campaign): ReactNode => (
+    <a
+      className="btn btn--ghost btn--sm"
+      href={`/apply/${c.id}`}
+      target="_blank"
+      rel="noreferrer"
+      title="Open the public candidate application page"
+    >
+      Apply page ↗
+    </a>
+  );
+  const deleteButton = (c: Campaign): ReactNode =>
+    canDelete ? (
+      <Button
+        variant="danger"
+        small
+        onClick={() => setToDelete(c)}
+        title="Permanently delete this campaign and all its data"
+      >
+        Delete
+      </Button>
+    ) : null;
+  const badges = (c: Campaign): ReactNode => (
+    <>
+      <Badge tone={readiness(c) === 5 ? "ok" : "warn"}>{readiness(c)}/5 artifacts</Badge>
+      <Badge tone={toneFor(c.state)}>{prettify(c.state)}</Badge>
+    </>
+  );
+
   return (
     <>
-      <div className="page-head">
-        <h1>Campaigns</h1>
-        <p>
-          A <strong>campaign</strong> is one job opening. Open a campaign to set up its job
-          description, screening rules and application form, then open it so candidates can apply.
-        </p>
-      </div>
-
-      <Card
-        title="All campaigns"
+      <PageHeader
+        title="Campaigns"
+        description={
+          <>
+            A <strong>campaign</strong> is one job opening. Open a campaign to set up its job
+            description, screening rules and application form, then open it so candidates can apply.
+          </>
+        }
         actions={
           hasPermission("campaign.create") && (
-            <Button variant="primary" small onClick={() => setShowCreate(true)}>
+            <Button variant="primary" onClick={() => setShowCreate(true)}>
               + New campaign
             </Button>
           )
         }
-      >
-        {campaigns.isLoading && <Loading />}
-        {campaigns.error && <ErrorNote>Could not load campaigns.</ErrorNote>}
-        {campaigns.data && campaigns.data.length === 0 && <Empty>No campaigns yet.</Empty>}
-        {campaigns.data && campaigns.data.length > 0 && (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Campaign</th>
-                  <th>Position</th>
-                  <th>Openings</th>
-                  <th>Readiness</th>
-                  <th>State</th>
-                  <th>Apply link</th>
-                  {canDelete && <th>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {campaigns.data.map((c) => {
-                  const ready = [
-                    c.approved_jd_version_id,
-                    c.approved_rule_set_version_id,
-                    c.approved_form_version_id,
-                    c.active_threshold_version_id,
-                    c.privacy_notice_version,
-                  ].filter(Boolean).length;
-                  return (
+      />
+
+      {campaigns.isLoading && <Loading />}
+      {campaigns.error && <ErrorNote>Could not load campaigns.</ErrorNote>}
+      {campaigns.data && campaigns.data.length === 0 && <Empty>No campaigns yet.</Empty>}
+
+      {all.length > 0 && (
+        <>
+          <FilterBar
+            search={search}
+            onSearch={setSearch}
+            placeholder="Search campaigns or positions"
+            trailing={
+              <>
+                <span className="result-count" aria-live="polite">
+                  {visible.length} of {all.length}
+                </span>
+                <ViewSwitcher value={view} onChange={setView} />
+              </>
+            }
+          >
+            <FilterSelect
+              label="Filter by state"
+              allLabel="All states"
+              value={stateFilter}
+              onChange={setStateFilter}
+              options={stateOptions}
+            />
+            <MineToggle checked={mine} onChange={setMine} label="Mine" />
+          </FilterBar>
+
+          {visible.length === 0 && (
+            <Empty>{mine ? "You are not assigned to any matching campaign." : "No campaigns match your filters."}</Empty>
+          )}
+
+          {visible.length > 0 && view === "grid" && (
+            <ItemGrid>
+              {visible.map((c) => (
+                <ItemCard
+                  key={c.id}
+                  title={<Link to={`/campaigns/${c.id}`}>{c.name}</Link>}
+                  subtitle={c.position_title}
+                  badges={badges(c)}
+                  meta={`${c.number_of_openings} opening${c.number_of_openings === 1 ? "" : "s"}`}
+                  actions={
+                    <>
+                      {applyLink(c)}
+                      {deleteButton(c)}
+                    </>
+                  }
+                />
+              ))}
+            </ItemGrid>
+          )}
+
+          {visible.length > 0 && view === "list" && (
+            <ItemList>
+              {visible.map((c) => (
+                <ItemRow
+                  key={c.id}
+                  title={<Link to={`/campaigns/${c.id}`}>{c.name}</Link>}
+                  subtitle={c.position_title}
+                  meta={`${c.number_of_openings} opening${c.number_of_openings === 1 ? "" : "s"}`}
+                  badges={badges(c)}
+                  actions={
+                    <>
+                      {applyLink(c)}
+                      {deleteButton(c)}
+                    </>
+                  }
+                />
+              ))}
+            </ItemList>
+          )}
+
+          {visible.length > 0 && view === "table" && (
+            <div className="table-wrap">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>Campaign</th>
+                    <th>Position</th>
+                    <th>Openings</th>
+                    <th>Readiness</th>
+                    <th>State</th>
+                    <th>Apply link</th>
+                    {canDelete && <th>Actions</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((c) => (
                     <tr key={c.id}>
                       <td>
                         <Link to={`/campaigns/${c.id}`}>{c.name}</Link>
@@ -77,42 +207,21 @@ export function CampaignsPage(): ReactNode {
                       <td>{c.position_title}</td>
                       <td>{c.number_of_openings}</td>
                       <td>
-                        <Badge tone={ready === 5 ? "ok" : "warn"}>{ready}/5 artifacts</Badge>
+                        <Badge tone={readiness(c) === 5 ? "ok" : "warn"}>{readiness(c)}/5 artifacts</Badge>
                       </td>
                       <td>
                         <Badge tone={toneFor(c.state)}>{prettify(c.state)}</Badge>
                       </td>
-                      <td>
-                        <a
-                          className="btn btn--ghost btn--sm"
-                          href={`/apply/${c.id}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="Open the public candidate application page"
-                        >
-                          Apply page ↗
-                        </a>
-                      </td>
-                      {canDelete && (
-                        <td>
-                          <Button
-                            variant="danger"
-                            small
-                            onClick={() => setToDelete(c)}
-                            title="Permanently delete this campaign and all its data"
-                          >
-                            Delete
-                          </Button>
-                        </td>
-                      )}
+                      <td>{applyLink(c)}</td>
+                      {canDelete && <td>{deleteButton(c)}</td>}
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
 
       {showCreate && (
         <CreateCampaignModal
@@ -144,7 +253,6 @@ export function CampaignsPage(): ReactNode {
     </>
   );
 }
-
 function DeleteCampaignModal({
   campaign,
   onClose,

@@ -9,8 +9,9 @@ import {
   type PendingDecision,
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
+import { JourneyButton } from "../components/JourneyButton";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, Empty, ErrorNote, Field, Loading, prettify, toneFor } from "../components/ui";
+import { PageHeader, Badge, Button, Card, Empty, ErrorNote, Field, Loading, prettify, toneFor } from "../components/ui";
 
 /* Hiring Decisions inbox: candidates the interview panel has assessed, now awaiting the
    final select / reject / hold. This is the handoff from the panel to the decision-maker.
@@ -22,16 +23,12 @@ export function DecisionsPage(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Hiring Decisions</h1>
-        <p>
-          Candidates the interview panel has assessed, waiting for a final decision. Review the
-          panel&rsquo;s verdict, then select, reject, or hold. Every decision is audited and may
-          trigger a candidate communication.
-        </p>
-      </div>
+      <PageHeader title="Hiring Decisions" description={<>Candidates the interview panel has assessed, waiting for a final decision. Review the panel&rsquo;s verdict, then select, reject, or hold. Every decision is audited and may trigger a candidate communication.</>} />
 
-      <Card title="Awaiting a decision">
+      <Card
+        title="Awaiting a decision"
+        description="Read what the interviewers said, give a reason, then choose. Select and Reject need approval rights; Hold does not."
+      >
         {pending.isLoading && <Loading />}
         {pending.error && (
           <ErrorNote>Could not load pending decisions (you may lack the required role).</ErrorNote>
@@ -84,7 +81,10 @@ function DecisionCard({ item }: { item: PendingDecision }): ReactNode {
     <div className="card" style={{ padding: 16 }}>
       <div className="card__head">
         <h2 style={{ margin: 0, fontSize: "1.05rem" }}>{item.candidate_name}</h2>
-        <Badge tone="info">Assessed · awaiting decision</Badge>
+        <div className="btn-row">
+          <Badge tone="info">Assessed · awaiting decision</Badge>
+          <JourneyButton applicationId={item.application_id} />
+        </div>
       </div>
       {error && <ErrorNote>{error}</ErrorNote>}
 

@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { z } from "zod";
 
 import { apiFetch } from "../api/client";
-import { Badge, Button, Card, Empty, ErrorNote, Field, Loading } from "../components/ui";
+import { PageHeader, Badge, Button, Card, Empty, ErrorNote, Field, Loading } from "../components/ui";
 
 const match = z.object({
   candidate_id: z.string(),
@@ -37,15 +37,12 @@ export function TalentPoolPage(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Talent Pool</h1>
-        <p>
-          Only candidates who gave a separate, explicit opt-in appear here. A match is advisory —
-          verify evidence before contacting anyone. Every search is audited.
-        </p>
-      </div>
+      <PageHeader title="Talent Pool" description={<>Only candidates who gave a separate, explicit opt-in appear here. A match is advisory — verify evidence before contacting anyone. Every search is audited.</>} />
 
-      <Card title="Search consented talent">
+      <Card
+        title="Search consented talent"
+        description="Only people who agreed to be considered for future jobs appear. Check the evidence before contacting anyone."
+      >
         {error && <ErrorNote>{error}</ErrorNote>}
         <form
           onSubmit={(e) => {
@@ -64,7 +61,10 @@ export function TalentPoolPage(): ReactNode {
 
       {loading && <Loading />}
       {results && (
-        <Card title={`Matches (${results.length})`}>
+        <Card
+          title={`Matches (${results.length})`}
+          description="Suggestions only. A person must check the evidence first."
+        >
           {results.length === 0 && <Empty>No consented candidates matched.</Empty>}
           {results.length > 0 && (
             <div className="table-wrap">

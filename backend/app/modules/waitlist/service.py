@@ -144,3 +144,26 @@ def reevaluate(
         previous_run_id=previous.id if previous else None,
         result_changed=changed,
     )
+
+
+def list_for_campaign(
+    db: Session, organisation_id: uuid.UUID, campaign_id: uuid.UUID
+) -> list[tuple[WaitlistRecord, str]]:
+    """Waitlist entries for a campaign with the candidate's name (newest first)."""
+    from sqlalchemy import select
+
+    stmt = (
+        select(WaitlistRecord, Application)
+        .join(Application, Application.id == WaitlistRecord.application_id)
+        .where(
+            WaitlistRecord.organisation_id == organisation_id,
+            WaitlistRecord.campaign_id == campaign_id,
+        )
+        .order_by(WaitlistRecord.created_at.desc())
+    )
+    out: list[tuple[WaitlistRecord, str]] = []
+    for record, application in db.execute(stmt).all():
+        answers = application.answers if isinstance(application.answers, dict) else {}
+        name = answers.get("full_name")
+        out.append((record, str(name) if name else "Candidate"))
+    return out

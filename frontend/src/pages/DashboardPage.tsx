@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+﻿import { useQuery } from "@tanstack/react-query";
+import { CheckCircle2, Flag } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useMemo, useState, type ReactNode } from "react";
 
@@ -11,7 +12,26 @@ import {
   type Application,
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
-import { Badge, Card, Empty, ErrorNote, Field, Loading, Stat, prettify, toneFor } from "../components/ui";
+import { HowItWorksCard } from "../components/FlowDiagram";
+import { JourneyButton } from "../components/JourneyButton";
+import {
+  Badge,
+  Banner,
+  Card,
+  Empty,
+  ErrorNote,
+  Field,
+  Loading,
+  PageHeader,
+  Stat,
+  prettify,
+  toneFor,
+} from "../components/ui";
+
+function greeting(): string {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
 
 // Cities offered in the candidate search filter.
 const CITIES = ["Mumbai", "Pune", "Bangalore", "Turbhe", "Delhi", "Ahmedabad"];
@@ -79,28 +99,17 @@ export function DashboardPage(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Welcome back</h1>
-        <p>
-          Signed in as {actor?.email} · {actor?.role_names.map(prettify).join(", ") || "no roles"}
-        </p>
-      </div>
+      <PageHeader
+        title={greeting()}
+        description={`Signed in as ${actor?.email ?? ""} · ${actor?.role_names.map(prettify).join(", ") || "no roles"}`}
+      />
 
-      {isApprover && pendingCount > 0 && (
-        <Card
-          title="Awaiting your approval"
-          actions={<Badge tone="warn">{pendingCount} pending</Badge>}
-        >
-          <p className="subtle" style={{ marginTop: 0 }}>
-            You have {pendingCount} item{pendingCount === 1 ? "" : "s"} (Job Descriptions and/or
-            rule-sets) waiting for your decision.
-          </p>
-          <Link to="/approvals" className="btn btn--primary btn--sm">
-            Review approvals →
-          </Link>
-        </Card>
-      )}
-
+      <NeedsYou
+        approvals={isApprover ? pendingCount : 0}
+        reviewItems={canReview ? (dash.data?.open_review_items ?? 0) : 0}
+        loading={canReview && dash.isLoading}
+      />
+      <HowItWorksCard />
       {canReview && (
         <>
           {dash.isLoading && <Loading label="Loading dashboard…" />}
@@ -117,6 +126,7 @@ export function DashboardPage(): ReactNode {
 
       <Card
         title="Campaigns"
+        description="Your most recent job openings and where each one stands."
         actions={
           <Link to="/campaigns" className="btn btn--sm">
             View all
@@ -158,20 +168,80 @@ export function DashboardPage(): ReactNode {
         )}
       </Card>
 
-      <Card title="Principles that govern this platform">
-        <ul className="subtle" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.9 }}>
-          <li>AI may extract and recommend — it never makes the hiring decision.</li>
-          <li>Screening is deterministic, version-controlled, and reproducible.</li>
-          <li>No candidate is auto-rejected on a score; low-confidence data goes to human review.</li>
-          <li>Every consequential action is audited; protected attributes never affect screening.</li>
-        </ul>
-      </Card>
+      <Banner>
+        AI may extract and recommend, but it never makes the hiring decision. Screening is deterministic and
+        reproducible, and low-confidence data goes to human review.
+      </Banner>
     </>
   );
 }
 
-/* HRMS Control Center: live KPI cards derived from the server's applications-by-state
-   counts, plus active-campaign and open-review indicators. */
+/* "Needs you": the first thing a user sees is what is waiting on them, with a direct action. */
+function NeedsYou({
+  approvals,
+  reviewItems,
+  loading,
+}: {
+  approvals: number;
+  reviewItems: number;
+  loading: boolean;
+}): ReactNode {
+  const items = [
+    {
+      key: "approvals",
+      count: approvals,
+      icon: <CheckCircle2 size={16} aria-hidden="true" />,
+      title: "Job descriptions and rule-sets awaiting your approval",
+      meta: "Approvals need a different person from the creator",
+      to: "/approvals",
+      cta: "Review approvals",
+    },
+    {
+      key: "reviews",
+      count: reviewItems,
+      icon: <Flag size={16} aria-hidden="true" />,
+      title: "Applications waiting for a human review",
+      meta: "Missing evidence, low confidence or conflicting data",
+      to: "/reviews",
+      cta: "Open review inbox",
+    },
+  ].filter((i) => i.count > 0);
+  const total = items.reduce((s, i) => s + i.count, 0);
+
+  return (
+    <Card
+      title={`Needs you${total > 0 ? ` · ${total}` : ""}`}
+      description="Things that are waiting for you. Press the button to go straight to them."
+      actions={total > 0 ? <Badge tone="warn">{total} open</Badge> : undefined}
+    >
+      {loading && <Loading />}
+      {!loading && items.length === 0 && <Empty>You are all caught up. Nothing is waiting on you.</Empty>}
+      {items.length > 0 && (
+        <ul className="todo-list">
+          {items.map((i) => (
+            <li key={i.key} className="todo">
+              <span className="todo__icon">{i.icon}</span>
+              <div className="todo__body">
+                <div className="todo__title">
+                  {i.count} · {i.title}
+                </div>
+                <div className="todo__meta">{i.meta}</div>
+              </div>
+              <div className="todo__actions">
+                <Link to={i.to} className="btn btn--primary btn--sm">
+                  {i.cta}
+                </Link>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+/* Pipeline overview: live KPI figures from the server's applications-by-state counts, plus a
+   segmented funnel (Applied → Screened → Shortlisted → Interviewed → Closed). */
 function HrmsControlCenter({
   activeCampaigns,
   openReviewItems,
@@ -185,9 +255,19 @@ function HrmsControlCenter({
   const countFor = (states: string[]): number =>
     states.includes("*") ? total : states.reduce((sum, s) => sum + (byState[s] ?? 0), 0);
 
+  const funnel = [
+    { label: "Applied", n: total },
+    { label: "Screened", n: countFor(POST_SCREENING_STATES) },
+    { label: "Shortlisted", n: countFor(["interview_recommended", "interview_scheduled", "attended", "assessed"]) },
+    { label: "Interviewed", n: countFor(["attended", "assessed"]) },
+    { label: "Selected", n: countFor(["selected"]) },
+  ];
+  const max = Math.max(1, total);
+
   return (
     <Card
-      title="HRMS Control Center"
+      title="Pipeline"
+      description="How many applications are at each stage across the campaigns you can see."
       actions={
         <div className="btn-row">
           <Badge tone="info">{activeCampaigns} open positions</Badge>
@@ -195,11 +275,27 @@ function HrmsControlCenter({
         </div>
       }
     >
-      <p className="subtle" style={{ marginTop: 0 }}>
-        Live pipeline across all campaigns you can see. Counts are computed server-side from
-        application states.
-      </p>
-      <div className="grid grid--4">
+      <div className="funnel-grid">
+        {funnel.map((f) => (
+          <div key={f.label}>
+            <div className="row row--between text-muted">
+              <span>{f.label}</span>
+              <strong>{f.n}</strong>
+            </div>
+            <div
+              className="funnel"
+              role="progressbar"
+              aria-label={`${f.label}: ${f.n} of ${total}`}
+              aria-valuemin={0}
+              aria-valuemax={total}
+              aria-valuenow={f.n}
+            >
+              <div className="funnel__seg" style={{ width: `${(f.n / max) * 100}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mb-4" />      <div className="grid grid--4">
         {KPI_CARDS.map((kpi) => (
           <Stat key={kpi.label} label={kpi.label} value={countFor(kpi.states)} hint={kpi.hint} />
         ))}
@@ -207,7 +303,6 @@ function HrmsControlCenter({
     </Card>
   );
 }
-
 /* Candidate search / filter bar. Loads applications across visible campaigns and filters
    by candidate name (from the application's own answers) and state. Masked data only — no
    PII is shown here; contact details require the audited reveal on the scorecard. */
@@ -247,7 +342,10 @@ function CandidateSearch(): ReactNode {
   });
 
   return (
-    <Card title="Candidate search">
+    <Card
+      title="Candidate search"
+      description="Find anyone who applied. Click Journey to see where they are and what happens next."
+    >
       <div className="grid grid--2" style={{ alignItems: "end" }}>
         <Field label="Search by name" htmlFor="cand-search">
           <input
@@ -295,9 +393,12 @@ function CandidateSearch(): ReactNode {
                     <Badge tone={toneFor(a.state)}>{prettify(a.state)}</Badge>
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    <Link to={`/campaigns/${a.campaign_id}`} className="btn btn--sm">
-                      Open campaign
-                    </Link>
+                    <div className="btn-row" style={{ justifyContent: "flex-end" }}>
+                      <JourneyButton applicationId={a.id} />
+                      <Link to={`/campaigns/${a.campaign_id}`} className="btn btn--sm">
+                        Open campaign
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -311,3 +412,5 @@ function CandidateSearch(): ReactNode {
     </Card>
   );
 }
+
+

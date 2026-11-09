@@ -22,6 +22,11 @@ dependencies = [
     # Excel (.xlsx) generation for the campaign export (reporting module). Read-only use:
     # it only writes workbooks from already-saved data and never touches scoring/DB state.
     "openpyxl==3.1.5",
+    # Serverless (AWS Lambda) hosting: ASGI adapter + S3 object store / signed links.
+    "mangum==0.22.0",
+    "boto3==1.43.123",
+    # HTTP client for the interview-agent (local/self-hosted mode).
+    "httpx==0.28.1",
 ]
 
 [project.optional-dependencies]

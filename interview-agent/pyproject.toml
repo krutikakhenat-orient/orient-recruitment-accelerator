@@ -1,0 +1,52 @@
+[project]
+name = "interview-agent"
+version = "0.1.0"
+description = "Voice interview agent for the Orient Recruitment Accelerator (AgentCore Runtime, Transcribe + gpt-oss-120b + Polly)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.115.5",
+  "uvicorn==0.52.4",
+  "websockets==15.0.1",
+  "pydantic==2.14.1",
+  "pydantic-settings==2.14.1",
+  "python-dotenv==1.2.4",
+  "boto3==1.43.125",
+  "amazon-transcribe==0.6.4",
+  "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==7.4.3",
+  "pytest-asyncio==0.21.1",
+  "ruff",
+  "mypy",
+]
+
+[project.scripts]
+interview-agent = "interview_agent.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+interview_agent = ["dev_client.html"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+mypy_path = "src"

@@ -13,6 +13,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_actor, requires
+from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.db.session import get_db
 from app.modules.documents.storage import default_object_store
@@ -24,6 +25,7 @@ from app.modules.induction.schemas import (
     CompletionResult,
     InductionStatusRead,
     InductionVideoRead,
+    InductionVideoUrl,
 )
 
 router = APIRouter(prefix="/api/v1/induction", tags=["induction"])
@@ -48,6 +50,33 @@ def get_induction_video(
     if video is None:
         raise NotFoundError("No induction video is configured")
     return InductionVideoRead.model_validate(video)
+
+
+@router.get("/video/url", response_model=InductionVideoUrl)
+def get_induction_video_url(
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(requires(Permission.INDUCTION_VIEW)),
+) -> InductionVideoUrl:
+    """Short-lived signed link to the video, for stores that support it (S3).
+
+    Serverless responses are size-limited, so large media is fetched straight from the
+    private bucket with a signed GET link instead of streaming through the API. The caller
+    is authenticated and holds ``induction.view``; the link is single-object, GET-only and
+    expires quickly. Stores without signed links (local dev) return 404 and the client falls
+    back to ``/video/stream``.
+    """
+    video = repo.get_active_video(db, actor.organisation_id)
+    if video is None:
+        raise NotFoundError("No induction video is configured")
+    presign = getattr(default_object_store, "presigned_get_url", None)
+    if presign is None:
+        raise NotFoundError("Signed video links are not supported by this storage")
+    ttl = get_settings().signed_url_ttl_seconds
+    return InductionVideoUrl(
+        url=presign(video.storage_key, video.content_type, ttl),
+        content_type=video.content_type,
+        expires_in_seconds=ttl,
+    )
 
 
 @router.get("/video/stream")

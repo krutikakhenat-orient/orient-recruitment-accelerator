@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +20,8 @@ class ReviewItemRead(BaseModel):
     detail: str | None
     status: str
     screening_run_id: uuid.UUID | None
+    # When the item was raised, so the inbox can show how long it has been waiting.
+    created_at: dt.datetime
 
 
 class ReviewActionRequest(BaseModel):

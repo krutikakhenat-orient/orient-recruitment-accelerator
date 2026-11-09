@@ -15,7 +15,7 @@ import {
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
 import { useToast } from "../components/toast";
-import { Badge, Button, Card, Empty, ErrorNote, Field, Loading, Modal, prettify } from "../components/ui";
+import { PageHeader, Badge, Button, Card, Empty, ErrorNote, Field, Loading, Modal, prettify } from "../components/ui";
 
 /* HR Head / Hiring Manager approvals inbox: pending Job Descriptions and screening
    rule-sets awaiting a decision, each with Approve / Reject. This is the focused view for
@@ -41,14 +41,7 @@ export function ApprovalsPage(): ReactNode {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Approvals</h1>
-        <p>
-          Items awaiting your decision. Approving a Job Description or rule-set makes it
-          immutable; rejecting returns it to the author with your reason. You are only shown
-          items for campaigns you are assigned to.
-        </p>
-      </div>
+      <PageHeader title="Approvals" description={<>Items awaiting your decision. Approving a Job Description or rule-set makes it immutable; rejecting returns it to the author with your reason. You are only shown items for campaigns you are assigned to.</>} />
 
       {!canApproveJd && !canApproveRules && (
         <Card title="Nothing to approve">
@@ -68,7 +61,10 @@ export function ApprovalsPage(): ReactNode {
       )}
 
       {canApproveJd && jds.data && jds.data.length > 0 && (
-        <Card title={`Job Descriptions awaiting approval (${jds.data.length})`}>
+        <Card
+          title={`Job Descriptions awaiting approval (${jds.data.length})`}
+          description="Read the job description, then approve it or ask for changes with a reason."
+        >
           <div className="table-wrap">
             <table className="data">
               <thead>
@@ -90,7 +86,10 @@ export function ApprovalsPage(): ReactNode {
       )}
 
       {canApproveRules && rules.data && rules.data.length > 0 && (
-        <Card title={`Rule-sets awaiting approval (${rules.data.length})`}>
+        <Card
+          title={`Rule-sets awaiting approval (${rules.data.length})`}
+          description="Check the rules and their weights. A different person from the author must approve."
+        >
           <div className="table-wrap">
             <table className="data">
               <thead>

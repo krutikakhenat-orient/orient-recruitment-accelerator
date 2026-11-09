@@ -83,6 +83,37 @@ export const assignToCampaign = (id: string, email?: string) =>
     method: "POST",
     body: JSON.stringify(email ? { email } : {}),
   });
+// "Set up this job" checklist: which setup steps are done and what to do next.
+export const setupStepStatus = z.enum(["done", "todo", "needs_approver", "waiting"]);
+export type SetupStepStatus = z.infer<typeof setupStepStatus>;
+export const setupStep = z
+  .object({
+    key: z.string(),
+    title: z.string(),
+    description: z.string(),
+    status: setupStepStatus,
+    who: z.string(),
+  })
+  .passthrough();
+export type SetupStep = z.infer<typeof setupStep>;
+export const campaignSetupStatus = z
+  .object({
+    campaign_id: uuid,
+    is_open: z.boolean(),
+    next_step_key: z.string().nullable(),
+    steps: z.array(setupStep),
+    latest_jd_version_id: uuid.nullable(),
+    latest_jd_status: z.string().nullable(),
+    draft_form_version_id: uuid.nullable(),
+  })
+  .passthrough();
+export type CampaignSetupStatus = z.infer<typeof campaignSetupStatus>;
+export const getCampaignSetupStatus = (id: string) =>
+  apiFetch(`/api/v1/campaigns/${id}/setup-status`, campaignSetupStatus);
+// Open a fully set-up job for applications (needs campaign.publish). Every internal step
+// is permission-checked and audited server-side.
+export const openForApplications = (id: string) =>
+  apiFetch(`/api/v1/campaigns/${id}/open-for-applications`, campaign, { method: "POST" });
 // Dev-only: create+approve all artifacts and drive the campaign to applications_open.
 export const devOpenCampaignNow = (id: string) =>
   apiFetch(`/api/v1/dev/campaigns/${id}/open-now`, campaign, { method: "POST" });
@@ -450,6 +481,7 @@ export const reviewItem = z
     detail: z.string().nullable(),
     status: z.string(),
     screening_run_id: uuid.nullable(),
+    created_at: z.string().nullable().optional(),
   })
   .passthrough();
 export type ReviewItem = z.infer<typeof reviewItem>;
@@ -1055,6 +1087,12 @@ export const markInductionComplete = () =>
 export async function fetchInductionVideoBlob(
   token: string,
 ): Promise<{ blob: Blob; contentType: string }> {
+  // Serverless hosting: large media cannot pass through the API response, so the API mints a
+  // short-lived signed link to the private bucket. Local/dev storage has no signed links
+  // (404), in which case we fall back to the authenticated stream below.
+  const signed = await fetchSignedInductionVideo(token);
+  if (signed) return signed;
+
   const resp = await fetch("/api/v1/induction/video/stream", {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -1068,6 +1106,31 @@ export async function fetchInductionVideoBlob(
   }
   const blob = await resp.blob();
   return { blob, contentType: resp.headers.get("Content-Type") ?? "video/mp4" };
+}
+
+const inductionVideoUrl = z
+  .object({ url: z.string(), content_type: z.string() })
+  .passthrough();
+
+// Returns the video Blob via a signed link, or null when the backend has no signed links
+// (so the caller falls back to the authenticated stream). The signed request deliberately
+// carries NO Authorization header: the signature in the URL is the credential.
+async function fetchSignedInductionVideo(
+  token: string,
+): Promise<{ blob: Blob; contentType: string } | null> {
+  let link: z.infer<typeof inductionVideoUrl>;
+  try {
+    const linkResp = await fetch("/api/v1/induction/video/url", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!linkResp.ok) return null;
+    link = inductionVideoUrl.parse(await linkResp.json());
+  } catch {
+    return null;
+  }
+  const resp = await fetch(link.url);
+  if (!resp.ok) throw new Error(`Could not load the induction video (${resp.status})`);
+  return { blob: await resp.blob(), contentType: link.content_type };
 }
 
 // Fetch the completion certificate HTML using the bearer token. Only succeeds after a

@@ -266,7 +266,7 @@ export function CandidateSummaryPage(): ReactNode {
       </div>
 
       {/* Scores + status */}
-      <Card title="Overview">
+      <Card title="Overview" description="The score and the main points at a glance.">
         <div className="summary-head">
           <div className="summary-scores">
             <div>
@@ -302,7 +302,7 @@ export function CandidateSummaryPage(): ReactNode {
 
       <div className="grid grid--2">
         {/* Strengths & skills */}
-        <Card title="Relevant skills & strengths">
+        <Card title="Relevant skills & strengths" description="Skills found in the resume that match the job.">
           <h3>Key strengths</h3>
           <PillGroup
             items={derived.strengths}
@@ -334,7 +334,10 @@ export function CandidateSummaryPage(): ReactNode {
         </Card>
 
         {/* Gaps */}
-        <Card title="Requirements to confirm">
+        <Card
+            title="Requirements to confirm"
+            description="Things the job needs that were not clearly found. This is not a 'no': a person decides."
+          >
           <h3>Missing mandatory requirements</h3>
           <PillGroup
             items={derived.missing}
@@ -356,7 +359,7 @@ export function CandidateSummaryPage(): ReactNode {
 
       {/* Per-criterion match bars */}
       {run && results.length > 0 && (
-        <Card title="Score breakdown by criterion">
+        <Card title="Score breakdown by criterion" description="How each part of the score was worked out.">
           {results.map((r, i) => {
             const pct = r.max_score > 0 ? (r.awarded_score / r.max_score) * 100 : 0;
             return (
@@ -377,7 +380,7 @@ export function CandidateSummaryPage(): ReactNode {
 
       {/* Contact + resume */}
       <div className="grid grid--2">
-        <Card title="Applied position & status">
+        <Card title="Applied position & status" description="What they applied for and where they are now.">
           <dl className="kv">
             <dt>Position</dt>
             <dd>{campaign.data?.position_title ?? "—"}</dd>
@@ -387,7 +390,10 @@ export function CandidateSummaryPage(): ReactNode {
             </dd>
           </dl>
         </Card>
-        <Card title="Contact & resume">
+        <Card
+          title="Contact & resume"
+          description="Contact details stay hidden until you reveal them. Each reveal is recorded."
+        >
           <ContactCard candidateId={app.data.candidate_id} />
           <div className="btn-row" style={{ marginTop: 14 }}>
             <Button

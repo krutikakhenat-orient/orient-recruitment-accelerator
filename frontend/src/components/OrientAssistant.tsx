@@ -1,5 +1,8 @@
+﻿import { MessageCircle, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+
+import { OPEN_ASSISTANT_EVENT } from "../lib/events";
 
 /* Orient HR Assistance — a built-in, deterministic help assistant.
 
@@ -53,9 +56,9 @@ const ANSWERS: Answer[] = [
     keywords: /(review|manual|conflict|low confidence)/i,
     reply:
       "Anything with missing evidence, low confidence, a conflict, or a borderline score is routed to " +
-      "the Review Queue for a human. Confirm or correct values there — corrections always keep the " +
+      "the Review inbox for a human. Confirm or correct values there — corrections always keep the " +
       "original extracted value plus your reason.",
-    chips: [{ label: "Open Review Queue", to: "/reviews" }],
+    chips: [{ label: "Open Review inbox", to: "/reviews" }],
   },
   {
     keywords: /(interview|slot|invite|assess)/i,
@@ -139,6 +142,13 @@ export function OrientAssistant(): ReactNode {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // The topbar "Ask AI" button and the command palette open this panel via a window event.
+  useEffect(() => {
+    const onOpen = (): void => setOpen(true);
+    window.addEventListener(OPEN_ASSISTANT_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_ASSISTANT_EVENT, onOpen);
+  }, []);
+
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, open]);
@@ -153,7 +163,7 @@ export function OrientAssistant(): ReactNode {
   if (!open) {
     return (
       <button className="assist-fab" onClick={() => setOpen(true)} aria-label="Open Orient HR Assistance">
-        💬
+        <MessageCircle size={20} aria-hidden="true" />
       </button>
     );
   }
@@ -161,20 +171,17 @@ export function OrientAssistant(): ReactNode {
   return (
     <aside className="assist-panel" aria-label="Orient HR Assistance">
       <div className="assist-head">
-        <span style={{ fontSize: "1.3rem" }} aria-hidden="true">
-          🤝
-        </span>
+        <Sparkles size={20} aria-hidden="true" />
         <div style={{ flex: 1 }}>
           <div className="assist-head__title">Orient HR Assistance</div>
           <div className="assist-head__sub">Guidance • runs without any external AI</div>
         </div>
         <button
           className="btn btn--ghost btn--sm"
-          style={{ color: "#fff" }}
           onClick={() => setOpen(false)}
           aria-label="Close assistant"
         >
-          ✕
+          <X size={16} aria-hidden="true" />
         </button>
       </div>
       <div className="assist-body" ref={bodyRef}>
@@ -227,3 +234,5 @@ export function OrientAssistant(): ReactNode {
     </aside>
   );
 }
+
+

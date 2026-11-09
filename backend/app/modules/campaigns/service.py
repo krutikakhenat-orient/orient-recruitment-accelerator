@@ -423,6 +423,233 @@ def fast_track_open(db: Session, *, actor, campaign: Campaign):  # type: ignore[
     return campaign
 
 
+# --- Setup checklist + one-step "Open for applications" ---------------------------------
+#
+# HR thinks in four jobs to do (upload the JD, get it approved, approve the application
+# form, open the job), not in the twelve internal lifecycle states. The checklist below is a
+# read-only projection of the campaign's approved artifacts, and open_for_applications walks
+# the remaining setup states for the user — every hop still goes through the
+# TransitionService (permission + assignment check + audit event), so this is a
+# convenience, never a governance bypass.
+
+# The full setup path in order. open_for_applications walks forward from wherever the
+# campaign currently is on this path.
+_SETUP_PATH: tuple[CampaignState, ...] = (
+    CampaignState.DRAFT,
+    CampaignState.JD_UPLOADED,
+    CampaignState.JD_REVIEW,
+    CampaignState.CRITERIA_CONFIGURATION,
+    CampaignState.CRITERIA_REVIEW,
+    CampaignState.APPROVAL_PENDING,
+    CampaignState.APPROVED,
+    CampaignState.PUBLISHED,
+    CampaignState.APPLICATIONS_OPEN,
+)
+
+# States before the job is visible to candidates.
+_PRE_OPEN_STATES: frozenset[str] = frozenset(s.value for s in _SETUP_PATH[:-2])
+
+
+class SetupStep:
+    __slots__ = ("key", "title", "description", "status", "who")
+
+    def __init__(self, key: str, title: str, description: str, status: str, who: str) -> None:
+        self.key = key
+        self.title = title
+        self.description = description
+        self.status = status
+        self.who = who
+
+
+class SetupStatus:
+    __slots__ = (
+        "campaign_id", "is_open", "next_step_key", "steps",
+        "latest_jd_version_id", "latest_jd_status", "draft_form_version_id",
+    )
+
+    def __init__(
+        self,
+        *,
+        campaign_id: uuid.UUID,
+        is_open: bool,
+        next_step_key: str | None,
+        steps: list[SetupStep],
+        latest_jd_version_id: uuid.UUID | None,
+        latest_jd_status: str | None,
+        draft_form_version_id: uuid.UUID | None,
+    ) -> None:
+        self.campaign_id = campaign_id
+        self.is_open = is_open
+        self.next_step_key = next_step_key
+        self.steps = steps
+        self.latest_jd_version_id = latest_jd_version_id
+        self.latest_jd_status = latest_jd_status
+        self.draft_form_version_id = draft_form_version_id
+
+
+def setup_status(db: Session, *, campaign: Campaign) -> SetupStatus:
+    """What is done and what to do next before this job can take applications (read-only).
+
+    Steps 1-3 can be worked on in any order; "open" only becomes actionable once they are
+    all done. ``next_step_key`` is the first step that is not done.
+    """
+    from app.modules.forms.models import FormSchema, FormVersion
+    from app.modules.job_descriptions.models import JDVersion, JobDescription
+
+    latest_jd = db.execute(
+        select(JDVersion)
+        .join(JobDescription, JDVersion.job_description_id == JobDescription.id)
+        .where(
+            JobDescription.organisation_id == campaign.organisation_id,
+            JobDescription.campaign_id == campaign.id,
+        )
+        .order_by(JDVersion.created_at.desc(), JDVersion.version_number.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    draft_form = db.execute(
+        select(FormVersion)
+        .join(FormSchema, FormVersion.form_schema_id == FormSchema.id)
+        .where(
+            FormSchema.organisation_id == campaign.organisation_id,
+            FormSchema.campaign_id == campaign.id,
+            FormVersion.status == "draft",
+        )
+        .order_by(FormVersion.version_number.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    state = campaign.state
+    is_open = state in (CampaignState.PUBLISHED.value, CampaignState.APPLICATIONS_OPEN.value)
+    went_live = state not in _PRE_OPEN_STATES and state != CampaignState.CANCELLED.value
+
+    jd_uploaded = latest_jd is not None or campaign.approved_jd_version_id is not None
+    jd_approved = campaign.approved_jd_version_id is not None
+    criteria_ready = (
+        campaign.approved_rule_set_version_id is not None
+        and campaign.active_threshold_version_id is not None
+    )
+    form_approved = campaign.approved_form_version_id is not None
+
+    def _status(done: bool, waiting_on_approver: bool = False, blocked: bool = False) -> str:
+        if done:
+            return "done"
+        if blocked:
+            return "waiting"
+        return "needs_approver" if waiting_on_approver else "todo"
+
+    steps = [
+        SetupStep(
+            "upload_jd", "Upload the job description",
+            "Upload the JD file (PDF or Word). The system reads it and pre-fills the details.",
+            _status(jd_uploaded), "Recruiter",
+        ),
+        SetupStep(
+            "approve_jd", "Check and approve the job description",
+            "An approver checks the extracted details and approves them. Approving also "
+            "creates the screening criteria automatically.",
+            _status(jd_approved, waiting_on_approver=jd_uploaded, blocked=not jd_uploaded),
+            "Recruiter Admin",
+        ),
+        SetupStep(
+            "criteria", "Screening criteria ready",
+            "Created automatically from the approved JD. You can review them later.",
+            _status(criteria_ready, blocked=not jd_approved), "Automatic",
+        ),
+        SetupStep(
+            "form", "Approve the application form",
+            "Create the form candidates fill in, then approve it.",
+            _status(form_approved, waiting_on_approver=draft_form is not None),
+            "Recruiter, then Recruiter Admin",
+        ),
+        SetupStep(
+            "open", "Open for applications",
+            "Makes the job live and gives you the apply link to share with candidates.",
+            _status(
+                went_live,
+                blocked=not (jd_approved and criteria_ready and form_approved),
+            ),
+            "Recruiter Admin",
+        ),
+    ]
+    next_step = next((s.key for s in steps if s.status != "done"), None)
+    return SetupStatus(
+        campaign_id=campaign.id,
+        is_open=is_open,
+        next_step_key=next_step,
+        steps=steps,
+        latest_jd_version_id=latest_jd.id if latest_jd is not None else None,
+        latest_jd_status=latest_jd.status if latest_jd is not None else None,
+        draft_form_version_id=draft_form.id if draft_form is not None else None,
+    )
+
+
+def open_for_applications(db: Session, *, actor, campaign: Campaign) -> Campaign:  # type: ignore[no-untyped-def]
+    """Open a fully set-up job for applications in one action.
+
+    Preconditions are checked up front with plain-language errors that name the checklist
+    step still missing. The actor must hold campaign.publish on this campaign (checked
+    first, so a Recruiter gets a clear "needs an approver" error rather than a partial walk).
+    If no privacy notice is attached yet, the organisation default is attached and audited —
+    candidates consent against it. Then the campaign walks the remaining setup states via
+    the TransitionService, which re-checks each hop's permission and records its audit event.
+    """
+    from app.core.config import get_settings
+    from app.modules.campaigns.transition_service import transition
+    from app.modules.identity.permissions import Permission
+    from app.modules.identity.policy import require_campaign_permission
+
+    require_campaign_permission(actor, Permission.CAMPAIGN_PUBLISH, campaign.id)
+
+    current = CampaignState(campaign.state)
+    if current is CampaignState.APPLICATIONS_OPEN:
+        return campaign
+    if current not in _SETUP_PATH:
+        raise ValidationError(
+            "This job is past setup (status: "
+            f"{current.value.replace('_', ' ')}). Use the status controls under Settings "
+            "to reopen or resume it."
+        )
+
+    missing: list[str] = []
+    if campaign.approved_jd_version_id is None:
+        missing.append("approve the job description (step 2)")
+    elif (
+        campaign.approved_rule_set_version_id is None
+        or campaign.active_threshold_version_id is None
+    ):
+        missing.append("screening criteria are not ready (step 3)")
+    if campaign.approved_form_version_id is None:
+        missing.append("approve the application form (step 4)")
+    if missing:
+        raise ValidationError("Not ready to open yet: " + "; ".join(missing) + ".")
+
+    if campaign.privacy_notice_version is None:
+        notice = get_settings().default_privacy_notice_version
+        campaign.privacy_notice_version = notice
+        campaign.updated_by = actor.user_id
+        db.flush()
+        record_event(
+            db,
+            AuditEventWrite(
+                organisation_id=campaign.organisation_id,
+                actor_id=actor.user_id,
+                action="campaign.privacy_notice_attached",
+                entity_type="campaign",
+                entity_id=str(campaign.id),
+                reason=f"organisation default privacy notice {notice} attached on open",
+            ),
+        )
+
+    start = _SETUP_PATH.index(current)
+    for destination in _SETUP_PATH[start + 1:]:
+        transition(
+            db, actor=actor, campaign=campaign, destination=destination,
+            reason="Opened for applications from the setup checklist",
+        )
+    return campaign
+
+
 def set_approved_jd_version(
     db: Session, campaign: Campaign, jd_version_id: uuid.UUID, actor_id: uuid.UUID
 ) -> None:

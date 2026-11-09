@@ -44,6 +44,34 @@ class ClosureReadinessRead(BaseModel):
     has_pending: bool
 
 
+class SetupStepRead(BaseModel):
+    """One step of the "Set up this job" checklist shown to HR.
+
+    ``status`` is ``done`` / ``todo`` / ``waiting`` (blocked on an earlier step) /
+    ``needs_approver`` (the work is done but someone else must approve it). ``who`` is the
+    role that usually performs the step, in plain words.
+    """
+
+    key: str
+    title: str
+    description: str
+    status: str
+    who: str
+
+
+class CampaignSetupStatusRead(BaseModel):
+    """Checklist view of what is done and what to do next before a job can take
+    applications. Read-only; computed from the campaign's approved artifacts."""
+
+    campaign_id: uuid.UUID
+    is_open: bool
+    next_step_key: str | None
+    steps: list[SetupStepRead]
+    latest_jd_version_id: uuid.UUID | None
+    latest_jd_status: str | None
+    draft_form_version_id: uuid.UUID | None
+
+
 class CampaignRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

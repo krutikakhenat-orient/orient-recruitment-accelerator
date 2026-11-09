@@ -1,10 +1,19 @@
 import type { ReactNode } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { Logo } from "../components/Logo";
 import { OrientAssistant } from "../components/OrientAssistant";
 import { AdminPage } from "../pages/AdminPage";
+import { AiInterviewPage } from "../pages/AiInterviewPage";
 import { ApprovalsPage } from "../pages/ApprovalsPage";
+import { AuditPage } from "../pages/AuditPage";
+import { ConfirmInterviewPage } from "../pages/ConfirmInterviewPage";
+import { GuidePage } from "../pages/GuidePage";
+import { IntegrationsPage } from "../pages/IntegrationsPage";
+import { OnboardingPage } from "../pages/OnboardingPage";
+import { PoliciesPage } from "../pages/PoliciesPage";
+import { SlaPage } from "../pages/SlaPage";
+import { WaitlistPage } from "../pages/WaitlistPage";
 import { AssessmentsPage } from "../pages/AssessmentsPage";
 import { CampaignDetailPage } from "../pages/CampaignDetailPage";
 import { CampaignsPage } from "../pages/CampaignsPage";
@@ -21,6 +30,7 @@ import { PublicApplyPage } from "../pages/PublicApplyPage";
 import { ReportPreviewPage } from "../pages/ReportPreviewPage";
 import { ResumeDownloadPage } from "../pages/ResumeDownloadPage";
 import { ReviewQueuePage } from "../pages/ReviewQueuePage";
+import { SettingsPage } from "../pages/SettingsPage";
 import { TalentPoolPage } from "../pages/TalentPoolPage";
 import { AppLayout } from "./AppLayout";
 import { useAuth } from "./auth-context";
@@ -52,6 +62,9 @@ function EmployeeShell(): ReactNode {
           <div className="topbar__title">Orient Recruitment Accelerator</div>
         </div>
         <div className="topbar__spacer" />
+        <Link className="btn btn--sm btn--ghost" to="/guide">
+          User guide
+        </Link>
         <button className="btn btn--sm" onClick={signOut}>
           Sign out
         </button>
@@ -76,6 +89,12 @@ export function App(): ReactNode {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/apply" element={<PublicApplyPage />} />
       <Route path="/apply/:campaignId" element={<PublicApplyPage />} />
+      {/* Candidate AI voice interview. The single-use link token is the only credential. */}
+      <Route path="/ai-interview/:token" element={<AiInterviewPage />} />
+      {/* Candidate's personal interview-confirmation link (no login; the token is the secret). */}
+      <Route path="/confirm/:token" element={<ConfirmInterviewPage />} />
+      {/* The user guide is public so anyone can read how the product works. */}
+      <Route path="/guide" element={<GuidePage />} />
 
       {/* Authenticated application */}
       <Route
@@ -111,6 +130,13 @@ export function App(): ReactNode {
                     <Route path="/reviews" element={<ReviewQueuePage />} />
                     <Route path="/talent-pool" element={<TalentPoolPage />} />
                     <Route path="/management" element={<ManagementPage />} />
+                    <Route path="/sla" element={<SlaPage />} />
+                    <Route path="/offers" element={<OnboardingPage />} />
+                    <Route path="/waitlist" element={<WaitlistPage />} />
+                    <Route path="/policies" element={<PoliciesPage />} />
+                    <Route path="/integrations" element={<IntegrationsPage />} />
+                    <Route path="/audit" element={<AuditPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
                     <Route path="/privacy" element={<PrivacyPage />} />
                     <Route path="/admin" element={<AdminPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />

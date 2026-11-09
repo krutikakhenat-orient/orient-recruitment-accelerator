@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { apiFetch, setAccessToken } from "./client";
+import { apiFetch, clearServerSession, setAccessToken } from "./client";
 
 const tokenPair = z.object({
   access_token: z.string(),
@@ -34,4 +34,6 @@ export async function fetchMe(): Promise<Actor> {
 
 export function logout(): void {
   setAccessToken(null);
+  // Also end the server-side browser session, otherwise a refresh would sign the user back in.
+  void clearServerSession();
 }

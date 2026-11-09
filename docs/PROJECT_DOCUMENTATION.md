@@ -317,7 +317,7 @@ flow:
    authority).
 9. **Management Viewer / Audit Viewer** — dashboards and the audit log.
 
-**Fast local shortcut:** each campaign's Overview tab has **"Open this campaign now (dev)"**
+**Fast local shortcut:** each campaign's Settings tab has **"Open this campaign now (dev)"**
 which creates and approves all five artifacts and opens the campaign in one click (dev-only;
 disabled in production). A ready-made demo campaign ("DEMO - Senior Python Engineer") with
 screened applicants and open review items is seeded for exploration.
@@ -392,6 +392,8 @@ Health probes (unversioned): `GET /health`, `GET /ready`.
 | Reports | GET `/reports/campaigns/{id}/report` | In-app report preview (JSON) — same records as the Excel download |
 | Reports | GET `/reports/campaigns/{id}/export` | Download the HR two-sheet `.xlsx` of a campaign's candidates (saved scores/ranks; PII masked unless `candidate.view_pii`) |
 | Audit | GET `/audit` | List hash-chained audit events |
+| Campaigns | GET `/campaigns/{id}/setup-status` | "Set up this job" checklist: which setup steps are done and the next one (`campaign.edit` or `campaign.publish` + assignment) |
+| Campaigns | POST `/campaigns/{id}/open-for-applications` | Open a fully set-up job in one action (`campaign.publish` + assignment). Attaches the default privacy notice if missing; every state hop runs through the TransitionService and is audited |
 | Dev (local only) | POST `/dev/campaigns/{id}/open-now` | Create+approve all artifacts and open the campaign |
 
 A copy-pasteable, call-by-call walkthrough is in [api-reference.md](api-reference.md).
@@ -475,7 +477,7 @@ clearly marked. (See `.kiro/steering/testing.md`.)
 
 Honest status of items that are intentionally local-only or not yet complete:
 
-- **Dev "open now" endpoint** (`POST /api/v1/dev/campaigns/{id}/open-now`) and its Overview
+- **Dev "open now" endpoint** (`POST /api/v1/dev/campaigns/{id}/open-now`) and its Settings
   button are a local convenience; they relax four-eyes for thresholds and use a
   full-permission dev actor. Registered only outside production.
 - **Interviews, assessments, decisions, waitlist, talent-pool and privacy** have complete

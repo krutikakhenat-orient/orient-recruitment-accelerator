@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "5.62.7",
+    "lucide-react": "0.468.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-hook-form": "7.54.2",
@@ -20,6 +21,10 @@
     "zod": "3.24.1"
   },
   "devDependencies": {
+    "@aws-amplify/backend": "1.25.1",
+    "@aws-amplify/backend-cli": "1.10.0",
+    "aws-cdk-lib": "2.275.0",
+    "constructs": "10.8.1",
     "@eslint/js": "9.17.0",
     "@testing-library/jest-dom": "6.6.3",
     "@testing-library/react": "16.1.0",
