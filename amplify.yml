@@ -8,11 +8,10 @@ applications:
             - nvm use 22 || true
             # The Amplify Gen 2 backend (Cognito) lives in ../amplify-backend so its toolchain (which pins
             # zod 3.25.x) stays separate from the app's dependencies (zod 3.24.1).
-            - cd ../amplify-backend
-            # `npm install`, not `npm ci`: the lockfile could not be fully resolved on the developer
-            # machine (disk space). Top-level versions are still pinned exactly in package.json.
-            - npm install --no-audit --no-fund
-            - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
+            # Run in a subshell: Amplify reuses one shell across phases, so a bare `cd` would leak into
+            # the frontend phase. `npm install`, not `npm ci`: the lockfile could not be fully resolved on
+            # the developer machine (disk space); top-level versions are still pinned in package.json.
+            - (cd ../amplify-backend && npm install --no-audit --no-fund && npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID)
     frontend:
       phases:
         preBuild:
