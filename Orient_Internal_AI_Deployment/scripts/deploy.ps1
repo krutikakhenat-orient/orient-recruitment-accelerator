@@ -35,10 +35,6 @@ try {
     terraform init -input=false "-backend-config=backend.hcl"
     if ($LASTEXITCODE) { throw "terraform init failed" }
     $vars = @("-var", "region=$Region", "-var", "aws_profile=$Profile")
-    # GitHub repo (owner/name) allowed to deploy through OIDC, taken from the git remote.
-    $remote = (git -C $root remote get-url origin 2>$null)
-    # Handles https://github.com/o/r.git and ssh host aliases such as git@github-work:o/r.git
-    if ($remote -match '[:/](?<repo>[^/:]+/[^/]+?)(\.git)?$') { $vars += @("-var", "github_repo=$($Matches.repo)") }
     if ($agentArn) { $vars += @("-var", "agentcore_runtime_arn=$agentArn") }
     $urlFile = Join-Path $tf ".app_base_url"
     if (Test-Path $urlFile) { $vars += @("-var", "app_base_url=$((Get-Content $urlFile -Raw).Trim())") }

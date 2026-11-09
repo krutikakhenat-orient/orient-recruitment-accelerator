@@ -2,7 +2,6 @@ output "amplify_app_id" { value = aws_amplify_app.web.id }
 output "amplify_url" { value = "https://main.${aws_amplify_app.web.default_domain}" }
 output "api_url" { value = aws_apigatewayv2_api.http.api_endpoint }
 output "api_lambda_role_arn" { value = aws_iam_role.lambda.arn }
-output "github_deploy_role_arn" { value = aws_iam_role.github_deploy.arn }
 output "ops_function_name" { value = aws_lambda_function.ops.function_name }
 output "codecommit_clone_url_http" { value = aws_codecommit_repository.app.clone_url_http }
 output "files_bucket" { value = aws_s3_bucket.files.bucket }

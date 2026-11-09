@@ -386,12 +386,52 @@ resource "aws_lambda_permission" "apigw_invoke" {
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }
 
-# ---------------------------------------------------------------- Amplify Hosting shell
-# Terraform creates the app + branch and the /api/* rewrite. The Amplify Gen 2 backend (Cognito) is
-# deployed into this app/branch by `npx ampx pipeline-deploy`, and the SPA by a zip deployment.
+# ---------------------------------------------------------------- Amplify Hosting (from CodeCommit)
+# The app is connected to the CodeCommit repo. Every push to `main` makes Amplify run the root
+# amplify.yml for the `frontend` app root: `ampx pipeline-deploy` (Gen 2 backend: Cognito), then the
+# Vite build, then hosting. Terraform owns the app, branch, role and the /api/* rewrite.
+resource "aws_iam_role" "amplify_service" {
+  name = "${local.prefix}-amplify-service"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "amplify.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# Deploys the Amplify Gen 2 backend (CloudFormation, Cognito, etc.) from the build.
+resource "aws_iam_role_policy_attachment" "amplify_backend_deploy" {
+  role       = aws_iam_role.amplify_service.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmplifyBackendDeployFullAccess"
+}
+
+# Read-only pull of this one repository.
+resource "aws_iam_role_policy" "amplify_codecommit" {
+  name = "codecommit-pull"
+  role = aws_iam_role.amplify_service.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["codecommit:GitPull", "codecommit:GetBranch", "codecommit:GetRepository"]
+      Resource = aws_codecommit_repository.app.arn
+    }]
+  })
+}
+
 resource "aws_amplify_app" "web" {
-  name     = "${local.prefix}-web"
-  platform = "WEB"
+  name                 = "${local.prefix}-web"
+  platform             = "WEB"
+  repository           = aws_codecommit_repository.app.clone_url_http
+  iam_service_role_arn = aws_iam_role.amplify_service.arn
+
+  environment_variables = {
+    AMPLIFY_MONOREPO_APP_ROOT = "frontend"
+    AMPLIFY_DIFF_DEPLOY       = "false"
+  }
 
   custom_rule {
     source = "/api/<*>"
@@ -406,7 +446,8 @@ resource "aws_amplify_app" "web" {
 }
 
 resource "aws_amplify_branch" "main" {
-  app_id      = aws_amplify_app.web.id
-  branch_name = "main"
-  stage       = "PRODUCTION"
+  app_id            = aws_amplify_app.web.id
+  branch_name       = "main"
+  stage             = "PRODUCTION"
+  enable_auto_build = true
 }

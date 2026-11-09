@@ -66,17 +66,6 @@ variable "api_burst_limit" {
   default = 100
 }
 
-variable "github_repo" {
-  description = "GitHub repo allowed to deploy via OIDC, as owner/name."
-  type        = string
-  default     = "CHANGE_ME/HR-Accelerator"
-}
-
-variable "github_branch" {
-  type    = string
-  default = "main"
-}
-
 variable "codecommit_repo_name" {
   type    = string
   default = "orient-recruitment-accelerator"
