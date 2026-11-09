@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
+from app.db.dataapi import register_if_needed
 
 _settings = get_settings()
 
@@ -19,15 +20,16 @@ def _engine_options() -> dict[str, Any]:
     if _settings.db_null_pool:
         # Serverless hosting: no pooling across invocations (see Settings.db_null_pool).
         options["poolclass"] = NullPool
-    if _settings.database_url.startswith("postgresql"):
+    url = _settings.database_url
+    if url.startswith("postgresql") and "auroradataapi" not in url:
         # Allow time for a paused serverless database to resume on the first connection.
-        if "auroradataapi" not in _settings.database_url:
-            # psycopg-specific option. The Aurora Data API dialect (HTTPS, no TCP connection) has no
-            # connect_timeout, and resume-from-pause is handled by the Data API itself.
-            options["connect_args"] = {"connect_timeout": _settings.db_connect_timeout_seconds}
+        # psycopg-specific: the Aurora Data API dialect (HTTPS, no TCP connection) has no
+        # connect_timeout, and resume-from-pause is handled by the Data API itself.
+        options["connect_args"] = {"connect_timeout": _settings.db_connect_timeout_seconds}
     return options
 
 
+register_if_needed(str(_settings.database_url))
 engine = create_engine(str(_settings.database_url), **_engine_options())
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)

@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from alembic import context
 from app.core.config import get_settings
+from app.db.dataapi import register_if_needed
 from app.db.models_registry import Base
+
+register_if_needed(str(get_settings().database_url))
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# "%" must be doubled: ConfigParser treats a single "%" as interpolation, and the Aurora Data API URL
-# carries percent-encoded ARNs.
+# "%" must be doubled: ConfigParser treats a single "%" as interpolation, and the Aurora Data
+# API URL carries percent-encoded ARNs.
 config.set_main_option("sqlalchemy.url", str(get_settings().database_url).replace("%", "%%"))
 
 target_metadata = Base.metadata

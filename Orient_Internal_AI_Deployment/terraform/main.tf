@@ -213,6 +213,14 @@ resource "aws_iam_role_policy" "lambda" {
           Resource = "${aws_s3_bucket.files.arn}/*"
         },
         {
+          # Without ListBucket, S3 answers 403 (not 404) for a missing key, which breaks the
+          # app's "object exists?" checks (e.g. the optional seed induction video).
+          Sid      = "FilesBucketList"
+          Effect   = "Allow"
+          Action   = ["s3:ListBucket"]
+          Resource = aws_s3_bucket.files.arn
+        },
+        {
           # Data API: the only path to the database, scoped to this one cluster.
           Sid    = "DatabaseViaDataApi"
           Effect = "Allow"
