@@ -1,5 +1,8 @@
 # CI/CD pipeline (Orient_Internal_AI)
 
+> **Superseded.** The GitHub Actions workflow described here was removed: CodeCommit is now the
+> deployment source and GitHub is a backup only. See `backend-cicd-pipeline.md` for the current design.
+
 Source: `.github/workflows/deploy-orient-internal-ai.yml`. One GitHub Actions pipeline deploys the AgentCore agent, infrastructure, backend and frontend. Account `Orient_Internal_AI`, region `ap-south-1`.
 
 Status: documented from the workflow and scripts. The pipeline has not been run, and the architecture doc says nothing is deployed yet.

@@ -42,7 +42,10 @@ LLM service. See `.kiro/steering/` for the normative rules.
 ```
 backend/     FastAPI modular monolith (Python 3.13, SQLAlchemy 2.x, Alembic) — see backend/README.md
 frontend/    React + TypeScript (Vite) — see frontend/README.md
-deploy/      docker-compose, reverse proxy, env template
+deploy/aws/  AWS CDK (Python) deployment
+Orient_Internal_AI_Deployment/  Terraform deployment (Orient_Internal_AI account)
+interview-agent/  AI interview voice agent (Bedrock AgentCore)
+archive/     deprecated material, e.g. the old Docker Compose setup (do not use)
 seed/        synthetic-only demonstration data
 docs/        documentation hub, ADRs, threat model, guides
 .kiro/       steering + spec (requirements, design, tasks)
@@ -86,24 +89,8 @@ Then open http://localhost:5173 and sign in with a seed account:
 Full role list and the complete setup → screening → decision walkthrough are in
 [docs/README.md](docs/README.md).
 
-## Quick start — full Docker stack
-
-Prerequisites: Docker + Docker Compose.
-
-```bash
-cp deploy/.env.example deploy/.env     # fill in local-only secrets
-docker compose -f deploy/docker-compose.yml up --build
-```
-
-| Service    | URL / port                | Purpose                       |
-|------------|---------------------------|-------------------------------|
-| API        | http://localhost:8000     | FastAPI (`/health`, `/ready`) |
-| API docs   | http://localhost:8000/docs| OpenAPI (non-prod)            |
-| Frontend   | http://localhost:5173     | React dev server              |
-| PostgreSQL | localhost:5432            | Primary datastore             |
-| Redis      | localhost:6379            | Dramatiq broker / cache       |
-| MinIO      | http://localhost:9001     | S3-compatible object storage  |
-| MailHog    | http://localhost:8025     | Email sandbox                 |
+> The Docker Compose full-stack setup is deprecated and archived in
+> [archive/docker-compose/](archive/docker-compose/README.md). Do not use it.
 
 ## Quality gates
 

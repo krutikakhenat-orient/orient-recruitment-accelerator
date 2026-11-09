@@ -328,7 +328,9 @@ reproducibility of old results.
 
 ## Deployment Design
 
-Docker Compose for local (API, worker, PostgreSQL, Redis, MinIO, MailHog, reverse proxy).
+Local run via `backend/run_local.py` (SQLite) plus the Vite dev server. The earlier Docker
+Compose design is deprecated and archived in `archive/docker-compose/`. AWS deployment uses
+Terraform and CDK.
 Environment-based config validated at startup. Production gates per `steering/devsecops.md`.
 Backup/restore and clean-environment bootstrap documented in `docs/`.
 

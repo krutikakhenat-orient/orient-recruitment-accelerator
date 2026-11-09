@@ -11,7 +11,6 @@ quality gates every change must pass. For product and architecture context, star
 
 - Python 3.12+ (3.13 works locally; CI targets 3.12)
 - Node.js 20+
-- Optional: Docker + Docker Compose (for the full stack with PostgreSQL/Redis/MinIO/MailHog)
 
 ## 2. First-time setup
 
@@ -32,7 +31,7 @@ npm install
 
 ## 3. Running locally
 
-Fastest path (no Docker) — SQLite + auto-seed:
+SQLite + auto-seed (Docker Compose is deprecated and archived):
 
 ```powershell
 # Terminal 1 — backend at http://localhost:8000 (docs at /docs)
@@ -47,8 +46,7 @@ npm run dev
 Sign in with a synthetic account, e.g. `synthetic.hr_head@example.com` /
 `SyntheticDevPassword123` (full list in [docs/PROJECT_DOCUMENTATION.md](docs/PROJECT_DOCUMENTATION.md)).
 
-Full Docker stack: `docker compose -f deploy/docker-compose.yml up --build` (see
-[docs/deployment.md](docs/deployment.md)).
+Deployment methods are described in [docs/deployment.md](docs/deployment.md).
 
 ## 4. Quality gates (run before every PR)
 

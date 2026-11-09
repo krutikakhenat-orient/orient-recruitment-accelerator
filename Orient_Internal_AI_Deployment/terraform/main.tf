@@ -168,17 +168,21 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
   }
 }
 
-data "archive_file" "lambda" {
+# Terraform does NOT ship application code. The CodePipeline release (terraform-pipeline/) uploads
+# each build to releases/<commit>/ in this bucket, updates both functions and moves the `live`
+# alias. Terraform only needs a tiny placeholder package to CREATE the functions in a new
+# environment; afterwards the code fields are ignored (lifecycle below).
+data "archive_file" "bootstrap" {
   type        = "zip"
-  source_dir  = var.lambda_package_dir
-  output_path = "${path.module}/.build/lambda.zip"
+  source_dir  = "${path.module}/bootstrap-lambda"
+  output_path = "${path.module}/.build/bootstrap-lambda.zip"
 }
 
 resource "aws_s3_object" "lambda" {
   bucket      = aws_s3_bucket.artifacts.id
-  key         = "lambda/${data.archive_file.lambda.output_md5}.zip"
-  source      = data.archive_file.lambda.output_path
-  source_hash = data.archive_file.lambda.output_md5
+  key         = "bootstrap/${data.archive_file.bootstrap.output_md5}.zip"
+  source      = data.archive_file.bootstrap.output_path
+  source_hash = data.archive_file.bootstrap.output_md5
 }
 
 # ---------------------------------------------------------------- Lambda (no VPC)
@@ -300,16 +304,37 @@ resource "aws_lambda_function" "api" {
   handler          = "app.lambda_handler.handler"
   s3_bucket        = aws_s3_object.lambda.bucket
   s3_key           = aws_s3_object.lambda.key
-  source_code_hash = data.archive_file.lambda.output_base64sha256
+  source_code_hash = data.archive_file.bootstrap.output_base64sha256
   memory_size      = 1024
   timeout          = 29
 
+  # Configuration changes (environment, memory, timeout) update $LATEST only. Live traffic uses
+  # the `live` alias, so a config change takes effect at the next pipeline release, which
+  # publishes $LATEST as a new version (or run "Release change" on the pipeline).
   environment { variables = local.common_env }
   logging_config {
     log_format = "JSON"
     log_group  = aws_cloudwatch_log_group.api.name
   }
   depends_on = [aws_iam_role_policy_attachment.lambda_logs]
+
+  # Code is owned by the release pipeline, not Terraform.
+  lifecycle {
+    ignore_changes = [s3_bucket, s3_key, s3_object_version, source_code_hash]
+  }
+}
+
+# Live traffic goes through this alias. The pipeline points it at each new, tested version and
+# back to the previous one on failure, so Terraform must not reset it.
+resource "aws_lambda_alias" "api_live" {
+  name             = "live"
+  description      = "Version serving API Gateway traffic (managed by the release pipeline)"
+  function_name    = aws_lambda_function.api.function_name
+  function_version = "$LATEST"
+
+  lifecycle {
+    ignore_changes = [function_version]
+  }
 }
 
 # Migrations / seeding only. No URL, no API route: IAM invoke only.
@@ -321,7 +346,7 @@ resource "aws_lambda_function" "ops" {
   handler          = "app.ops_handler.handler"
   s3_bucket        = aws_s3_object.lambda.bucket
   s3_key           = aws_s3_object.lambda.key
-  source_code_hash = data.archive_file.lambda.output_base64sha256
+  source_code_hash = data.archive_file.bootstrap.output_base64sha256
   memory_size      = 1024
   timeout          = 900
 
@@ -333,6 +358,11 @@ resource "aws_lambda_function" "ops" {
     log_group  = aws_cloudwatch_log_group.ops.name
   }
   depends_on = [aws_iam_role_policy_attachment.lambda_logs]
+
+  # Code is owned by the release pipeline (it invokes the published version it just deployed).
+  lifecycle {
+    ignore_changes = [s3_bucket, s3_key, s3_object_version, source_code_hash]
+  }
 }
 
 # ---------------------------------------------------------------- API Gateway (only entry point)
@@ -351,9 +381,12 @@ resource "aws_apigatewayv2_api" "http" {
 resource "aws_apigatewayv2_integration" "api" {
   api_id                 = aws_apigatewayv2_api.http.id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.api.invoke_arn
+  integration_uri        = aws_lambda_alias.api_live.invoke_arn
   payload_format_version = "2.0"
   timeout_milliseconds   = 29000
+
+  # The alias permission must exist before traffic is switched to the alias.
+  depends_on = [aws_lambda_permission.apigw_invoke_live]
 }
 
 resource "aws_apigatewayv2_route" "proxy" {
@@ -390,6 +423,16 @@ resource "aws_lambda_permission" "apigw_invoke" {
   statement_id  = "AllowApiGatewayInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.api.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
+}
+
+# API Gateway may invoke only the `live` alias of the API function.
+resource "aws_lambda_permission" "apigw_invoke_live" {
+  statement_id  = "AllowApiGatewayInvokeLive"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.api.function_name
+  qualifier     = aws_lambda_alias.api_live.name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }

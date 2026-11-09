@@ -19,12 +19,6 @@ variable "name" {
   default     = "ora"
 }
 
-variable "lambda_package_dir" {
-  description = "Folder produced by scripts\\build-lambda.ps1."
-  type        = string
-  default     = "../.build/lambda"
-}
-
 variable "db_min_acu" {
   description = "0 lets Aurora auto-pause when idle (cheapest; first request after idle is slow)."
   type        = number

@@ -37,7 +37,10 @@ inclusion: always
 - Template versioning; delivery and failure tracking
 
 ## Deployment
-- Docker + Docker Compose (local), reverse proxy, environment-based config, Linux target
+- Local: SQLite + `backend/run_local.py` and the Vite dev server. Docker Compose is
+  deprecated and archived in `archive/docker-compose/`; do not use or extend it.
+- AWS: Terraform (`Orient_Internal_AI_Deployment/`), CDK (`deploy/aws/`), AgentCore for the
+  interview agent. Environment-based config, Linux target.
 
 ## Testing
 - Backend: pytest. Frontend: Vitest + Testing Library. API integration, e2e (Playwright),

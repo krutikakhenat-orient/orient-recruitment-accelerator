@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+﻿import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Fragment, useState, type ReactNode } from "react";
 
 import {
   approveAiInterview,
@@ -94,7 +94,12 @@ export function AiInterviewsPanel({
   const key = ["ai-interviews", campaignId];
   const sessions = useQuery({ queryKey: key, queryFn: () => listAiInterviews(campaignId) });
   const [error, setError] = useState<string | null>(null);
-  const [issued, setIssued] = useState<ApproveResponse | null>(null);
+  // Links by session id. Each candidate has their own link, shown once under their row.
+  // Kept in memory only: the server stores just a hash, so a lost link needs a new one.
+  const [links, setLinks] = useState<Record<string, ApproveResponse>>({});
+  const showLink = (r: ApproveResponse): void => setLinks((prev) => ({ ...prev, [r.session.id]: r }));
+  const hideLink = (sessionId: string): void =>
+    setLinks((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== sessionId)));
   const [reviewing, setReviewing] = useState<AiInterview | null>(null);
   const [viewing, setViewing] = useState<AiInterview | null>(null);
   const [retrying, setRetrying] = useState<AiInterview | null>(null);
@@ -127,7 +132,7 @@ export function AiInterviewsPanel({
   const reissue = useMutation({
     mutationFn: (id: string) => reissueAiInterviewLink(id),
     onSuccess: (r) => {
-      setIssued(r);
+      showLink(r);
       refresh();
     },
     onError: fail("Could not issue a new link."),
@@ -158,8 +163,6 @@ export function AiInterviewsPanel({
         exists, and a person reads the result.
       </p>
       {error && <ErrorNote>{error}</ErrorNote>}
-
-      {issued && <IssuedLink issued={issued} onClose={() => setIssued(null)} />}
 
       {canPlan && canOffer.length > 0 && (
         <div className="btn-row" style={{ margin: "8px 0 12px", alignItems: "end" }}>
@@ -212,8 +215,10 @@ export function AiInterviewsPanel({
                 const early = endedEarly(r);
                 const a = attempts.get(r.id);
                 const canRetryRow = r.status === "completed" && (a?.latest ?? true);
+                const link = links[r.id];
                 return (
-                  <tr key={r.id}>
+                  <Fragment key={r.id}>
+                  <tr>
                     <td>
                       {nameOf(r.application_id)}
                       {a && a.total > 1 && <div className="subtle">Attempt {a.attempt}</div>}
@@ -326,6 +331,18 @@ export function AiInterviewsPanel({
                       </div>
                     </td>
                   </tr>
+                  {link && (
+                    <tr>
+                      <td colSpan={4}>
+                        <IssuedLink
+                          issued={link}
+                          name={nameOf(r.application_id)}
+                          onClose={() => hideLink(r.id)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -341,7 +358,7 @@ export function AiInterviewsPanel({
           onClose={() => setReviewing(null)}
           onApproved={(r) => {
             setReviewing(null);
-            setIssued(r);
+            showLink(r);
             refresh();
           }}
           onError={(m) => setError(m)}
@@ -354,7 +371,7 @@ export function AiInterviewsPanel({
           onClose={() => setRetrying(null)}
           onIssued={(r) => {
             setRetrying(null);
-            setIssued(r);
+            showLink(r);
             refresh();
             toast.push("New attempt created. Copy the link and send it to the candidate.", { tone: "ok" });
           }}
@@ -373,19 +390,28 @@ export function AiInterviewsPanel({
 }
 
 /* The link is shown once: only its hash is stored, so it cannot be recovered later. */
-function IssuedLink({ issued, onClose }: { issued: ApproveResponse; onClose: () => void }): ReactNode {
+function IssuedLink({
+  issued,
+  name,
+  onClose,
+}: {
+  issued: ApproveResponse;
+  name: string;
+  onClose: () => void;
+}): ReactNode {
   const toast = useToast();
   return (
-    <div className="card" role="status" style={{ marginBottom: 12 }}>
-      <strong>Candidate link ready</strong>
+    <div className="card" role="status" style={{ margin: "4px 0" }}>
+      <strong>Interview link for {name}</strong>
       <p className="subtle" style={{ margin: "4px 0 8px" }}>
-        Copy it now and send it to the candidate. For security it is shown only once (create a
-        new link if you lose it). Expires {new Date(issued.link_expires_at).toLocaleString()}.
+        This link is for {name} only. Copy it now and send it to them. For security it is shown
+        only once (create a new link if you lose it). Expires{" "}
+        {new Date(issued.link_expires_at).toLocaleString()}.
       </p>
       <div className="btn-row">
         <input
           readOnly
-          aria-label="Candidate interview link"
+          aria-label={`Interview link for ${name}`}
           value={issued.link_url}
           style={{ flex: 1, minWidth: 260 }}
           onFocus={(e) => e.currentTarget.select()}

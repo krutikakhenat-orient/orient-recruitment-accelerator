@@ -1,0 +1,17 @@
+# Deploy: runs from the Build artifact (lambda.zip, release.json, release.py, this file).
+# Releases Lambda code only; see release.py for the order and the automatic rollback.
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  install:
+    runtime-versions:
+      python: "3.12"
+    commands:
+      - python -m pip install -q --no-cache-dir "boto3==1.43.123"
+
+  build:
+    commands:
+      - python release.py

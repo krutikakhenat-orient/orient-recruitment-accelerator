@@ -58,7 +58,12 @@ function mockApi(sessions: AiInterview[], perms: string[]) {
           assigned_campaign_ids: [C1],
         }),
       );
-    if (url.includes(`/sessions/${S1}/retry`) && init?.method === "POST")
+    if (url.includes(`/sessions/${S1}/retry`) && init?.method === "POST") {
+      // The server now lists the new attempt too, so its link can sit on that row.
+      sessions = [
+        ...sessions,
+        session(S2, { status: "approved", end_reason: null, completed_at: null, created_at: "2026-11-08T05:00:00Z" }),
+      ];
       return Promise.resolve(
         json(
           {
@@ -69,6 +74,7 @@ function mockApi(sessions: AiInterview[], perms: string[]) {
           201,
         ),
       );
+    }
     if (url.includes(`/campaigns/${C1}/sessions`)) return Promise.resolve(json(sessions));
     return Promise.resolve(json([]));
   });
@@ -122,7 +128,7 @@ describe("AI interview retry", () => {
     await userEvent.type(reason, "SYNTHETIC: call dropped");
     await userEvent.click(submit);
 
-    expect(await screen.findByLabelText("Candidate interview link")).toHaveValue(
+    expect(await screen.findByLabelText(/Interview link for/)).toHaveValue(
       "http://app.test/ai-interview/synthetic-token",
     );
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes(`/sessions/${S1}/retry`));

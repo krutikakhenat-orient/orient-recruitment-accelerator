@@ -14,10 +14,10 @@ Successful pipeline, reviewed migration, security checks passed, environment val
 backup confirmation, rollback plan, human release approval.
 
 ## Local development environment provides
-docker-compose.yml, environment template (.env.example), seed script using synthetic data,
-developer setup instructions, migration/test/lint/build commands, local object storage
-(MinIO), local email sandbox (MailHog), local PostgreSQL, local Redis (only where required),
-health checks.
+`backend/run_local.py` (SQLite, auto-seeded with synthetic data), developer setup
+instructions, migration/test/lint/build commands, health checks. The Docker Compose
+environment (MinIO, MailHog, PostgreSQL, Redis) is deprecated and archived in
+`archive/docker-compose/`.
 
 ## Never commit
 Real credentials, production candidate data, resumes, secrets, access tokens, private keys,

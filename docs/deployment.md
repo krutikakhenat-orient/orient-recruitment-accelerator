@@ -1,25 +1,31 @@
 # Deployment
 
+## Deployment methods
+
+| Method | Location | Status |
+|---|---|---|
+| Terraform (Orient_Internal_AI account) | `Orient_Internal_AI_Deployment/` | Current AWS path |
+| AWS CDK (Python) | `deploy/aws/` | Supported |
+| Bedrock AgentCore (interview agent) | `interview-agent/InterviewAgent/agentcore/` | Supported |
+| AWS Amplify (Gen 2 auth / hosting) | `amplify.yml`, `amplify-backend/` | Supported |
+| Docker Compose | `archive/docker-compose/` | **Deprecated, archived. Do not use.** |
+
 ## Local development (clean environment → running app)
 
-Prerequisites: Docker + Docker Compose.
-
-```bash
-cp deploy/.env.example deploy/.env         # fill local-only values
-docker compose -f deploy/docker-compose.yml up --build
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe run_local.py     # SQLite + auto-seed, API at :8000
 ```
 
-This starts PostgreSQL, Redis, MinIO, MailHog, the API (which runs `alembic upgrade head`
-on start), and the frontend dev server. Then seed synthetic data:
-
-```bash
-docker compose -f deploy/docker-compose.yml exec api python -m app.cli.seed
+```powershell
+cd frontend
+npm install
+npm run dev                                 # app at :5173, proxies /api to :8000
 ```
 
-Services: API `:8000` (`/health`, `/ready`, `/docs`), frontend `:5173`, Postgres `:5432`,
-Redis `:6379`, MinIO console `:9001`, MailHog UI `:8025`.
-
-## Backend without Docker
+## Backend manual setup
 
 ```bash
 cd backend

@@ -134,7 +134,7 @@ frontend/    React + TypeScript (Vite)
     app/           router, layout, auth context
     components/    UI kit, toast, Orient HR Assistance
     pages/         one page per portal area
-deploy/      docker-compose, reverse proxy, env template
+deploy/aws/  AWS CDK deployment (Docker Compose is archived in archive/)
 seed/        synthetic-only demonstration data
 docs/        this hub, ADRs, guides, threat model, checklists
 .kiro/       steering rules + spec (requirements, design, tasks)
@@ -174,26 +174,11 @@ Open `http://localhost:5173` and sign in with a seed account (section 6).
 > Windows note: if `npm run dev` is blocked by PowerShell execution policy, run Vite
 > directly: `node node_modules\vite\bin\vite.js --host --port 5173`.
 
-### 5b. Full Docker stack
+### 5b. Docker stack (deprecated)
 
-Prerequisites: Docker + Docker Compose.
-
-```bash
-cp deploy/.env.example deploy/.env     # fill in local-only secrets
-docker compose -f deploy/docker-compose.yml up --build
-```
-
-| Service    | URL / port                 | Purpose                        |
-|------------|----------------------------|--------------------------------|
-| API        | http://localhost:8000      | FastAPI (`/health`, `/ready`)  |
-| API docs   | http://localhost:8000/docs | OpenAPI (non-prod only)        |
-| Frontend   | http://localhost:5173      | React dev server               |
-| PostgreSQL | localhost:5432             | Primary datastore              |
-| Redis      | localhost:6379             | Dramatiq broker / cache        |
-| MinIO      | http://localhost:9001      | S3-compatible object storage   |
-| MailHog    | http://localhost:8025      | Email sandbox                  |
-
-See [deployment.md](deployment.md) for production deployment.
+The Docker Compose setup is deprecated and archived in
+[../archive/docker-compose/](../archive/docker-compose/README.md). Do not use it.
+See [deployment.md](deployment.md) for the current deployment methods.
 
 ## 6. Seed accounts & roles
 

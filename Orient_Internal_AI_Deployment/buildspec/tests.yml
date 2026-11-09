@@ -1,0 +1,21 @@
+# Verify / Tests: lint, type check, backend test suite, Alembic migrations on a throwaway PostgreSQL.
+# `ruff format --check` is not a gate yet (most files predate the formatter); see docs/backend-cicd-pipeline.md.
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  install:
+    runtime-versions:
+      python: "3.12"
+    commands:
+      - dnf install -y -q postgresql16-server || dnf install -y -q postgresql15-server
+      - cd "$CODEBUILD_SRC_DIR/backend" && python -m pip install -q --no-cache-dir -e ".[dev]"
+
+  build:
+    commands:
+      - cd "$CODEBUILD_SRC_DIR/backend" && python -m ruff check app tests
+      - cd "$CODEBUILD_SRC_DIR/backend" && python -m mypy app
+      - cd "$CODEBUILD_SRC_DIR/backend" && python -m pytest -q -p no:cacheprovider -o addopts=""
+      - bash "$CODEBUILD_SRC_DIR/Orient_Internal_AI_Deployment/pipeline/check_migrations.sh"

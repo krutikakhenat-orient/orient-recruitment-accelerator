@@ -47,9 +47,8 @@ orient-recruitment-accelerator/
 │   ├── tests/
 │   └── package.json
 ├── deploy/
-│   ├── docker-compose.yml
-│   ├── reverse-proxy/
-│   └── .env.example
+│   └── aws/             # CDK deployment (Docker Compose is archived in /archive)
+├── archive/             # deprecated material (docker-compose); do not use
 ├── seed/                    # synthetic data + synthetic resume generator
 ├── .github/workflows/ci.yml
 └── README.md

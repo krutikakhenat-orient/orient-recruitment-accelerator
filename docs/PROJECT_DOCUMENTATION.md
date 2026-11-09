@@ -153,7 +153,7 @@ frontend/    React + TypeScript (Vite)
     app/           router, layout, auth context
     components/    UI kit, toast, Orient HR Assistance
     pages/         one page per portal area
-deploy/      docker-compose, reverse proxy, env template
+deploy/aws/  AWS CDK deployment (Docker Compose is archived in archive/)
 seed/        synthetic data
 docs/        this file, the docs hub, ADRs, guides, checklists
 .kiro/       steering rules + spec (requirements, design, tasks)
@@ -272,17 +272,11 @@ Open http://localhost:5173 and sign in with a seed account (section 7). On Windo
 `npm run dev` is blocked by execution policy, run Vite directly:
 `node node_modules\vite\bin\vite.js --host --port 5173`.
 
-### 9b. Full Docker stack
+### 9b. Docker stack (deprecated)
 
-Prerequisites: Docker + Docker Compose.
-
-```bash
-cp deploy/.env.example deploy/.env
-docker compose -f deploy/docker-compose.yml up --build
-```
-
-Brings up API, PostgreSQL, Redis, MinIO (object storage), and MailHog (email sandbox).
-See [deployment.md](deployment.md).
+The Docker Compose setup is deprecated and archived in
+[../archive/docker-compose/](../archive/docker-compose/README.md). Do not use it.
+See [deployment.md](deployment.md) for the current deployment methods.
 
 ## 10. Using the app (by role)
 

@@ -1,0 +1,30 @@
+# Build: decide whether the commit changes Lambda code, build + audit the package, and export the
+# variables that let CodePipeline skip Approve/Deploy for frontend-only or docs-only commits.
+version: 0.2
+
+env:
+  shell: bash
+  exported-variables:
+    - BACKEND_CHANGED
+    - HAS_MIGRATIONS
+    - COMMIT
+    - COMMIT_SHORT
+    - SUMMARY
+
+phases:
+  install:
+    runtime-versions:
+      python: "3.12"
+    commands:
+      - python -m pip install -q --no-cache-dir "pip-audit==2.7.3"
+
+  build:
+    commands:
+      - python "$CODEBUILD_SRC_DIR/Orient_Internal_AI_Deployment/pipeline/build_package.py"
+      - set -a && . "$CODEBUILD_SRC_DIR/release.env" && set +a
+      - echo "BACKEND_CHANGED=$BACKEND_CHANGED HAS_MIGRATIONS=$HAS_MIGRATIONS COMMIT=$COMMIT_SHORT"
+
+artifacts:
+  base-directory: dist
+  files:
+    - "**/*"

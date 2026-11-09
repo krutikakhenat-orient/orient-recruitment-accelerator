@@ -1,0 +1,23 @@
+# Verify / Security: secret scan of the committed tree (gitleaks, repo .gitleaks.toml) and static
+# security analysis of the backend (bandit, medium+ severity and confidence). Either finding fails.
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  install:
+    runtime-versions:
+      python: "3.12"
+    commands:
+      - curl -sSfL -o /tmp/gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+      - echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c -
+      - tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+      - python -m pip install -q --no-cache-dir "bandit==1.8.0"
+
+  build:
+    commands:
+      # Scan exactly what is committed (no .git internals, no build output).
+      - mkdir -p /tmp/src && git -C "$CODEBUILD_SRC_DIR" archive HEAD | tar -x -C /tmp/src
+      - gitleaks dir /tmp/src --config "$CODEBUILD_SRC_DIR/.gitleaks.toml" --no-banner --redact --exit-code 1
+      - python -m bandit -r "$CODEBUILD_SRC_DIR/backend/app" -ll -ii -q
