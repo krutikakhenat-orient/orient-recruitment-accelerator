@@ -12,10 +12,11 @@ param(
 $ErrorActionPreference = "Continue"
 $env:AWS_PROFILE = $Profile
 
-$force = if ($Force) { "true" } else { "false" }
+# Not "$force": PowerShell variable names are case-insensitive and would collide with the -Force switch.
+$forceValue = if ($Force.IsPresent) { "true" } else { "false" }
 $id = aws codepipeline start-pipeline-execution --name $Pipeline --region $Region `
-    --variables "name=FORCE_RELEASE,value=$force" --query pipelineExecutionId --output text
+    --variables "name=FORCE_RELEASE,value=$forceValue" --query pipelineExecutionId --output text
 if ($LASTEXITCODE) { throw "Could not start $Pipeline (aws sso login --profile $Profile ?)" }
-Write-Host "Started $Pipeline execution $id (FORCE_RELEASE=$force)"
+Write-Host "Started $Pipeline execution $id (FORCE_RELEASE=$forceValue)"
 Write-Host "Watch: https://$Region.console.aws.amazon.com/codesuite/codepipeline/pipelines/$Pipeline/executions/$id/timeline?region=$Region"
 Write-Host "It waits at Approve for your approval (email or console) before anything is deployed."
