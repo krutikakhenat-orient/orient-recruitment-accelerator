@@ -13,7 +13,7 @@ const stack = Stack.of(backend.auth.resources.userPool);
 // Cost-allocation tags (same convention as the Terraform and AgentCore stacks).
 Tags.of(stack).add("Project", "orient-recruitment-accelerator");
 Tags.of(stack).add("Application", "HR Accelerator");
-Tags.of(stack).add("Environment", process.env.ORA_ENVIRONMENT ?? "staging");
+Tags.of(stack).add("Environment", process.env.ORA_ENVIRONMENT ?? "production");
 Tags.of(stack).add("Owner", "sumanpramanik@orientindia.net");
 Tags.of(stack).add("CostCenter", "Orient_Internal_AI");
 Tags.of(stack).add("ManagedBy", "amplify-gen2");
