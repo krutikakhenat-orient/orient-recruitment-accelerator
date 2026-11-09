@@ -1,78 +1,35 @@
-# Full v2 deploy from a developer machine (CI runs the same steps, see .github/workflows):
-#   1 AgentCore agent (agentcore CLI) -> 2 Lambda package -> 3 Terraform -> 4 lock agent runtime
-#   -> 5 DB migrations -> 6 Amplify Gen 2 backend (Cognito) -> 7 frontend to Amplify Hosting.
-# Usage: .\deploy.ps1 [-Seed] [-SkipAgent] [-PlanOnly]
+# Infrastructure deploy from a developer machine (Terraform is applied locally only).
+#   1 state bucket (once) -> 2 app stack (terraform/) -> 3 release pipeline (terraform-pipeline/)
+# Application CODE is not deployed here: push to CodeCommit main (or run release-api.ps1) and
+# approve the release. The interview agent is deployed with deploy-agent.ps1.
+# Usage: .\deploy.ps1 [-PlanOnly] [-SkipPipeline]
 param(
     [string]$Profile = "Orient_Internal_AI",
     [string]$Region = "ap-south-1",
-    [switch]$Seed,
-    [switch]$SkipAgent,
-    [switch]$PlanOnly
+    [switch]$PlanOnly,
+    [switch]$SkipPipeline
 )
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $env:AWS_PROFILE = $Profile
-$here = $PSScriptRoot
-$deployRoot = Resolve-Path (Join-Path $here "..")
-$root = Resolve-Path (Join-Path $deployRoot "..")
-$tf = Join-Path $deployRoot "terraform"
-$arnFile = Join-Path $deployRoot ".agent_runtime_arn"
+$deployRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$app = Join-Path $deployRoot "terraform"
+$pipe = Join-Path $deployRoot "terraform-pipeline"
 
 aws sts get-caller-identity --query Account --output text | Out-Null
 if ($LASTEXITCODE) { throw "Not logged in. Run: aws sso login --profile $Profile" }
+if (-not (Test-Path (Join-Path $app "backend.hcl"))) { & (Join-Path $PSScriptRoot "bootstrap-backend.ps1") -Profile $Profile -Region $Region }
 
-if (-not (Test-Path (Join-Path $tf "backend.hcl"))) { & (Join-Path $here "bootstrap-backend.ps1") -Profile $Profile -Region $Region }
-
-# 1. AgentCore agent
-if (-not $SkipAgent) { & (Join-Path $here "deploy-agent.ps1") -Profile $Profile -Region $Region }
-$agentArn = if (Test-Path $arnFile) { (Get-Content $arnFile -Raw).Trim() } else { "" }
-
-# 2. Lambda package: backend + Data API dialect (pure-Python wheels)
-& (Join-Path $here "build-lambda.ps1")
-
-# 3. Terraform
-Push-Location $tf
-try {
-    terraform init -input=false "-backend-config=backend.hcl"
-    if ($LASTEXITCODE) { throw "terraform init failed" }
-    $vars = @("-var", "region=$Region", "-var", "aws_profile=$Profile")
-    if ($agentArn) { $vars += @("-var", "agentcore_runtime_arn=$agentArn") }
-    $urlFile = Join-Path $tf ".app_base_url"
-    if (Test-Path $urlFile) { $vars += @("-var", "app_base_url=$((Get-Content $urlFile -Raw).Trim())") }
-
-    if ($PlanOnly) { terraform plan -input=false @vars; return }
-    terraform apply -input=false -auto-approve @vars
-    if ($LASTEXITCODE) { throw "terraform apply failed" }
-
-    $out = terraform output -json | ConvertFrom-Json
-    # The Amplify URL is only known after the first apply; feed it back for CORS / app base URL.
-    if (-not (Test-Path $urlFile) -or (Get-Content $urlFile -Raw).Trim() -ne $out.amplify_url.value) {
-        Set-Content $urlFile $out.amplify_url.value -NoNewline
-        $vars = @("-var", "region=$Region", "-var", "aws_profile=$Profile", "-var", "app_base_url=$($out.amplify_url.value)")
-        if ($agentArn) { $vars += @("-var", "agentcore_runtime_arn=$agentArn") }
-        terraform apply -input=false -auto-approve @vars
-        if ($LASTEXITCODE) { throw "terraform second apply failed" }
-    }
-}
-finally { Pop-Location }
-
-# 4. Restrict who may invoke the agent runtime to the API Lambda role.
-#    To keep your own admin/test access, pass the IAM ROLE ARN (not the sts session ARN) of your SSO role via
-#    -ExtraAllowedPrincipalArns when running scripts\lock-agent-runtime.ps1 by hand.
-if ($agentArn) {
-    & (Join-Path $here "lock-agent-runtime.ps1") -RuntimeArn $agentArn -ApiLambdaRoleArn $out.api_lambda_role_arn.value `
-        -Profile $Profile -Region $Region
+function Invoke-Terraform([string]$dir, [string[]]$initArgs) {
+    terraform "-chdir=$dir" init -input=false @initArgs
+    if ($LASTEXITCODE) { throw "terraform init failed in $dir" }
+    if ($PlanOnly) { terraform "-chdir=$dir" plan -input=false; return }
+    # Interactive: Terraform shows the plan and asks for "yes" before changing anything.
+    terraform "-chdir=$dir" apply
+    if ($LASTEXITCODE) { throw "terraform apply failed in $dir" }
 }
 
-# 5. Database migrations (and optional synthetic seed). Aurora may need ~30 s to resume from pause.
-$action = if ($Seed) { "migrate_and_seed" } else { "migrate" }
-$payload = Join-Path ([IO.Path]::GetTempPath()) "ora_ops_payload.json"
-$resp = Join-Path ([IO.Path]::GetTempPath()) "ora_ops_response.json"
-[IO.File]::WriteAllText($payload, "{`"action`":`"$action`"}")
-aws lambda invoke --function-name $out.ops_function_name.value --region $Region `
-    --cli-binary-format raw-in-base64-out --cli-read-timeout 900 --payload "file://$payload" $resp | Out-Null
-Get-Content $resp
-
-# 6. Amplify Gen 2 backend (Cognito)   7. Frontend
-& (Join-Path $here "deploy-amplify-backend.ps1") -Profile $Profile -Region $Region -AppId $out.amplify_app_id.value
-& (Join-Path $here "deploy-frontend.ps1") -Profile $Profile -Region $Region -AppId $out.amplify_app_id.value
-Write-Host "`nApp URL: $($out.amplify_url.value)`nAPI URL: $($out.api_url.value)"
+Invoke-Terraform $app @("-backend-config=backend.hcl")
+if (-not $SkipPipeline) {
+    Invoke-Terraform $pipe @("-backend-config=$app\backend.hcl", "-backend-config=key=hr-accelerator/pipeline/terraform.tfstate")
+}
+Write-Host "Infrastructure done. Code: push to CodeCommit main, then approve the release (email / console)."

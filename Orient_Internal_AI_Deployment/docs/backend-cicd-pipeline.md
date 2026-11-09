@@ -1,167 +1,138 @@
-# Backend CI/CD pipeline (CodeCommit -> CodePipeline -> CodeBuild)
+# Backend release pipeline (CodeCommit -> CodePipeline -> CodeBuild)
 
-Status: **design, not built yet.** Account `Orient_Internal_AI` (917511768830), region `ap-south-1`.
-Replaces the manual `scripts/deploy-api.ps1` run and the retired GitHub Actions workflow
-(`cicd-pipeline.md`). GitHub stays a backup remote only.
+Account `Orient_Internal_AI` (917511768830), region `ap-south-1`. Pipeline `ora-staging-backend`.
+Defined in `terraform-pipeline/` (applied locally). Stage logic in `buildspec/` and `pipeline/`.
 
-## 1. Goals
+**The pipeline releases Lambda code only.** Infrastructure (Aurora, API Gateway, IAM, S3, Lambda configuration)
+is Terraform in `terraform/`, applied by hand from a developer machine. No pipeline role can create or change
+infrastructure, and the pipeline cannot change itself.
 
-- Every push to CodeCommit `main` tests, builds and deploys the backend without a developer laptop or SSO login.
-- A human approves each production release after seeing the Terraform plan and the database migrations.
-- A failed release never leaves the API broken: the previous Lambda version keeps serving, and rollback takes seconds.
-- Meets the DevSecOps gates in `.kiro/steering/devsecops.md`: format, lint, type check, tests, dependency scan, secret scan, SAST, migration validation, backup before migration, rollback plan, human approval.
-
-## 2. Architecture
+## 1. Flow
 
 ```mermaid
 flowchart TB
   dev([Developer]) -->|git push main| cc[(CodeCommit<br/>orient-recruitment-accelerator)]
-  cc -->|push event| amp["Amplify Hosting<br/>(frontend + Cognito,<br/>existing, unchanged)"]
-  cc -->|EventBridge rule: main updated| pl
+  cc -->|push| amp["Amplify Hosting<br/>frontend + Cognito"]
+  cc -->|EventBridge: main updated| src
 
-  subgraph pl["CodePipeline V2 ora-backend (execution mode QUEUED)"]
+  subgraph pl["CodePipeline V2 ora-staging-backend (QUEUED: one release at a time)"]
     direction TB
     src["1 Source<br/>CodeCommit main, full clone"]
-    subgraph ver["2 Verify (parallel CodeBuild)"]
+    subgraph ver["2 Verify (parallel)"]
       direction LR
-      t["Tests<br/>ruff format/lint, mypy,<br/>pytest, terraform validate"]
-      s["Security<br/>gitleaks, pip-audit, bandit"]
-      m["Migrations<br/>alembic upgrade head on a<br/>throwaway Postgres container"]
+      t["Tests<br/>ruff, mypy, pytest,<br/>migrations on empty PostgreSQL"]
+      s["Security<br/>gitleaks, bandit"]
     end
-    b["3 Build<br/>Lambda zip + SHA-256,<br/>terraform plan -out, change summary"]
-    a{{"4 Approve<br/>manual, SNS email,<br/>plan + new migrations attached"}}
-    d["5 Deploy<br/>snapshot if migrations, terraform apply plan,<br/>migrate via ops version N, test version N,<br/>move alias live to N, public smoke test"]
-    r["6 Release frontend (optional)<br/>amplify start-job"]
-    src --> ver --> b --> a --> d --> r
+    b["3 Build<br/>changed? package zip + SHA-256,<br/>pip-audit, release.json"]
+    a{{"4 Approve<br/>email to approvers"}}
+    d["5 Deploy<br/>publish vN, snapshot if migrations,<br/>migrate, test vN, alias live to vN,<br/>smoke test, roll back on failure"]
+    src --> ver --> b --> a --> d
   end
 
-  subgraph aws["Runtime (Terraform-managed)"]
-    apigw["API Gateway"] -->|alias live| api["Lambda ora-staging-api<br/>versions N-1, N"]
-    ops["Lambda ora-staging-ops<br/>version N"] --> db[("Aurora via Data API")]
-    api --> db
-  end
+  b -. "no backend change: Approve + Deploy skipped" .-> skip([done])
 
-  d -->|terraform apply| aws
-  d -.->|on failure: alias back to N-1| api
+  subgraph run["Runtime"]
+    gw["API Gateway"] -->|alias live| api["ora-staging-api<br/>versions N-1, N"]
+    ops["ora-staging-ops vN"] --> db[("Aurora (Data API)")]
+  end
+  d --> api
+  d --> ops
 ```
 
-## 3. Stages in detail
+## 2. Stages
 
-### Stage 1: Source
-- CodeCommit source action on `main`, output format **full clone** (`CODEBUILD_CLONE_REF`) so later steps can diff against the last deployed commit.
-- Trigger: EventBridge rule on `referenceUpdated` for `refs/heads/main` (no polling).
-- Execution mode **QUEUED**: releases run one after another, never in parallel. The Terraform S3 lockfile is a second guard.
-
-### Stage 2: Verify (three CodeBuild actions in parallel, no AWS deploy rights)
-| Action | Runs | Fails the release when |
+| Stage | What runs | Fails when |
 |---|---|---|
-| Tests | `ruff format --check`, `ruff check`, `mypy`, `pytest` (backend, 414+ tests), `terraform fmt -check` + `validate` | any check fails |
-| Security | `gitleaks` with the repo's `.gitleaks.toml`, `pip-audit` on the pinned backend dependencies, `bandit` on `backend/app` | a secret is found, or a known-vulnerable dependency / high-severity finding |
-| Migrations | starts `postgres:16` in the build container, runs `alembic upgrade head` from an empty database and lists the revisions added since the last release | a migration fails, or there are multiple Alembic heads |
+| **Source** | CodeCommit `main`, full clone (so Build can diff). Started by an EventBridge rule on every push. | |
+| **Verify / Tests** | `ruff check app tests`, `mypy app` (strict), `pytest` (backend suite), then `alembic heads` + `alembic upgrade head` on a throwaway PostgreSQL 16 in the build container | any check fails, more than one Alembic head, a migration fails |
+| **Verify / Security** | `gitleaks` on the committed tree with the repo's `.gitleaks.toml` (binary pinned and checksum-verified), `bandit` on `backend/app` (medium+ severity and confidence) | a secret or a security finding |
+| **Build** | Diffs against the last released commit (SSM `/ora-staging/release/last-commit`). If runtime files changed (`backend/app/`, `backend/alembic/`, `alembic.ini`, `pyproject.toml`, `lambda-extra-requirements.txt`): builds the Lambda zip deterministically, records its SHA-256, runs `pip-audit` on the exact package. Writes `release.json`. | build error; `pip-audit` findings only if `pip_audit_enforce = true` |
+| **Approve** | Manual approval. SNS email with the commit, changed-file count, new migrations, dependency findings. | rejected (nothing has changed in AWS) |
+| **Deploy** | `pipeline/release.py`, see section 3 | any step fails (see rollback) |
 
-### Stage 3: Build
-- Builds the Lambda package on Linux: pinned dependencies, `backend/app`, Alembic migrations, the Data API driver. Same content as `scripts/build-lambda.ps1`.
-- Records the SHA-256 of the zip.
-- `terraform plan -out=tfplan` with the remote state. The plan file and a plain-text summary go into the pipeline artifact.
-- Writes `release-notes.txt`: commit range, changed backend files, new migration files, plan summary (resources to add/change/destroy).
-- **Path check:** if the commit range changes nothing under `backend/`, `Orient_Internal_AI_Deployment/terraform/` or `interview-agent/`, the build marks the release as "no backend change" and stages 4 and 5 exit immediately. Frontend-only changes are already handled by Amplify.
+Approve and Deploy are **skipped** when the commit changes no runtime file (frontend, docs or tests only), so those
+commits never ask for approval. To release without a code change (e.g. after a Lambda configuration change in
+Terraform), start the pipeline with `FORCE_RELEASE=true`: `scripts\release-api.ps1 -Force`.
 
-### Stage 4: Approve
-- Manual approval action. An SNS email goes to the release approvers with a link to `release-notes.txt` and the plan.
-- The approver checks: resources to destroy (should normally be 0), new migrations (must be backward compatible, see section 5), and the change summary.
-- Rejecting stops the release; nothing has changed in AWS.
+Not gates yet: `ruff format --check` (137 existing files are unformatted) and `pip-audit` (see section 6).
 
-### Stage 5: Deploy (CodeBuild with the deploy role)
-1. **Backup** (only when the release contains new migrations): manual Aurora cluster snapshot `ora-pre-<commit>`, waits until available. This is the "backup confirmation" gate.
-2. **Infrastructure + code:** `terraform apply tfplan` applies exactly the approved plan. If the state changed since the plan was made, apply refuses (stale plan) and the release fails safely; re-run the pipeline. Lambda functions are published as a new **version N**. The `live` alias still points to N-1, so users keep getting the old code.
-3. **Migrate:** invokes `ora-staging-ops` **version N** with `{"action":"migrate"}`. Retries while Aurora resumes from auto-pause.
-4. **Pre-release test:** invokes `ora-staging-api` **version N** directly with a synthetic `GET /health` event. Expects 200.
-5. **Switch:** points alias `live` to version N. API Gateway calls the alias, so the switch is immediate and atomic.
-6. **Smoke test:** `GET <api>/health` and `GET <api>/api/v1/auth/me` (expects 401, which proves routing, the app and the auth layer). Retries for up to 2 minutes.
-7. **Automatic rollback:** if step 6 fails, the alias goes back to N-1 and the stage fails. The schema stays migrated, which is safe because migrations are backward compatible.
-8. **Interview agent** (only when `interview-agent/` changed): installs the pinned AgentCore CLI and runs `scripts/deploy-agent.ps1` equivalent (`agentcore deploy --target default`), webhook secret read from Terraform state.
+## 3. Deploy order and automatic rollback
 
-### Stage 6: Release frontend (optional, recommended)
-Both Amplify and this pipeline currently start on the same push, so a frontend change can go live before the API it needs. Two options:
-- **A (simple, current):** keep Amplify auto-build. Rule: API changes must be additive, so the old and new frontend both work against the new API.
-- **B (ordered):** turn off Amplify auto-build; this stage calls `aws amplify start-job --job-type RELEASE` after the backend is live. One pipeline releases everything in the right order.
+1. Upload `lambda.zip` to `s3://ora-staging-artifacts-<account>/releases/<commit>/lambda.zip`.
+2. Update the code of `ora-staging-ops` and `ora-staging-api`, verify Lambda's `CodeSha256` equals the built zip,
+   publish **version N** of each (description `commit <sha>`).
+3. If the release adds migrations (or the previous release is unknown): Aurora cluster snapshot
+   `ora-pre-<sha>-<time>`, wait until available.
+4. Migrate with **ops version N** (`{"action": "migrate"}`).
+5. Invoke **api version N** directly with a synthetic `GET /health`; expect 200. Live traffic is still on N-1.
+6. Point alias `live` (API Gateway's target) to version N.
+7. Public smoke test: `GET /health` = 200 and `GET /api/v1/auth/me` = 401, up to 6 tries.
+8. If step 7 fails: alias `live` goes back to N-1 and the release fails.
+9. Record the released commit in SSM.
+
+A failure in steps 1-5 leaves live traffic untouched on N-1.
 
 ## 4. Rollback
 
 | What | How | Time |
 |---|---|---|
-| API code | `aws lambda update-alias --function-name ora-staging-api --name live --function-version <N-1>` (or re-run the pipeline on the previous commit). Published versions keep their own copy of the code, so old builds are always available. | seconds |
-| Infrastructure | `git revert` the change and push; the pipeline plans and applies the revert. State is versioned in S3. | one pipeline run |
-| Frontend | Amplify console: redeploy an earlier build, or `git revert`. | minutes |
-| Database schema | No automatic down-migrations. Fix forward with a new migration, or restore the `ora-pre-<commit>` snapshot to a new cluster (slow, restores data to that moment; last resort). | fix forward: one release |
-| Interview agent | Re-run the pipeline on the previous commit (`agentcore deploy`). | minutes |
+| API code | `scripts\rollback-api.ps1` (previous version) or `-Version <n>`. Published versions keep their own code. | seconds |
+| Infrastructure | `git revert`, then `terraform apply` locally. State is versioned in S3. | minutes |
+| Frontend | Amplify console: redeploy an earlier build, or `git revert` + push. | minutes |
+| Database schema | No automatic down-migrations. Fix forward with a new migration; last resort: restore the `ora-pre-*` snapshot to a new cluster (restores data to that moment). | one release |
 
-## 5. Database migration rules (expand / contract)
+After a manual rollback, revert or fix the bad commit before the next push: the next release moves `live` forward.
 
-Code rolls back in seconds; the schema does not. Every migration must keep the **previous** app version working:
-- Allowed in one release: add tables, add nullable columns, add indexes, add columns with defaults.
-- Two releases needed: rename or remove a column (release 1 adds the new column and writes both; release 2 removes the old one after the old code is gone).
-- Never in the same release: drop, rename, or change the type of something the running code uses.
-- The approver checks new migration files against these rules in stage 4.
+## 5. Migration rules (expand / contract)
 
-## 6. Security of the pipeline
+Code rolls back in seconds; the schema does not. Every migration must keep the **previous** version working:
+- One release: add tables, nullable columns, columns with defaults, indexes.
+- Two releases: rename or remove a column (add the new one and write both; remove the old one a release later).
+- Never in one release: drop, rename or retype anything the running code uses.
 
-| Control | How |
+The approval email lists new migration files; the approver checks them against these rules.
+
+## 6. Security
+
+| Control | Implementation |
 |---|---|
-| No long-lived keys | CodePipeline and CodeBuild use IAM service roles. |
-| Separate roles | Verify and build roles: read source, write logs and artifacts, read Terraform state for plan. **Only the deploy role** can change AWS resources. |
-| Least privilege | Deploy role scoped to `ora-staging-*` resources where IAM allows; roles it creates get a permissions boundary, so Terraform cannot create a role more powerful than intended. Not `AdministratorAccess`. |
-| Approved plan only | Apply uses the saved plan file from stage 3; nothing else can be applied. |
-| Secrets | Never in buildspecs or logs. Terraform outputs that are secrets stay `sensitive`; build logs mask them. |
-| Artifacts | Private, encrypted (KMS) artifact bucket; 30-day expiry. |
-| Audit | Every execution, approval (who, when, comment) and CloudTrail event is recorded. |
-| Isolation | The pipeline's own resources live in a separate Terraform root (`terraform-pipeline/`), applied manually, so the pipeline cannot change or delete itself. |
+| No stored credentials | CodePipeline, CodeBuild and EventBridge use IAM service roles (trust limited to this account). |
+| Least privilege | **CI role** (Tests, Security, Build): logs, pipeline artifacts, `codecommit:GitPull` on the repo, read the release marker. **Deploy role**: update code / publish / alias / invoke on the two functions only, write `releases/*` in the artifacts bucket, snapshot the one cluster, update the release marker. No IAM, no infrastructure, no Lambda configuration. |
+| Human approval | Every backend release waits for an approver. |
+| Integrity | Lambda's `CodeSha256` must match the built zip; `publish_version` is pinned to that hash. |
+| Supply chain | gitleaks binary pinned + SHA-256 verified; Python tools pinned; Lambda dependencies pinned in `pyproject.toml`. |
+| Artifacts | Private, encrypted, TLS-only bucket; artifacts expire after 30 days. |
+| Audit | Pipeline executions and approvals (who, when, comment) in CodePipeline; API calls in CloudTrail; build logs in `/aws/codebuild/ora-staging-backend` (30 days). |
 
-## 7. Terraform changes needed in the app stack
+**Known dependency vulnerabilities.** The first `pip-audit` run found 30 published vulnerabilities in pinned
+dependencies: `pyjwt` 2.10.1 (17, fixed in 2.12-2.15), `python-multipart` 0.0.20 (6, fixed by 0.0.31) and
+`starlette` 0.41.3 (7, fixed in 0.47-1.3; needs a FastAPI upgrade). `pip-audit` reports them on every approval
+email. After the upgrade, set `pip_audit_enforce = true` in `terraform-pipeline/variables.tf` and apply, so new
+vulnerable dependencies block releases.
 
-- `publish = true` on both Lambdas, an `aws_lambda_alias.live` for `api` (and `ops`), and the API Gateway integration and invoke permission pointing to the alias.
-- `lifecycle { ignore_changes = [function_version] }` on the alias, because the pipeline (not Terraform) moves it after testing.
-- Keep the last few Lambda versions; remove older ones in the deploy step (Lambda has a 75 GB code-storage quota per Region).
+## 7. Lambda versions and the alias
 
-## 8. Files to add
+- `terraform/` creates alias `live` and points API Gateway at it. Terraform ignores the alias target and the
+  function code (`lifecycle.ignore_changes`), so a local `terraform apply` never rolls code back.
+- Terraform creates new functions with a placeholder package (`terraform/bootstrap-lambda/`) that answers 503 until
+  the first release.
+- Lambda configuration changes made by Terraform apply to `$LATEST`; they reach live traffic when the next release
+  publishes a version (`release-api.ps1 -Force`).
+- Old versions are kept (each is about 50 MB; the regional code-storage quota is 75 GB).
+
+## 8. Cost (estimate, list prices)
+
+About 12-15 build minutes per backend release (small/medium Linux) plus a few cents of pipeline time; frontend-only
+commits run only Source, Verify and Build. Roughly **$5-10 a month at 30 backend releases**, plus small amounts for
+the artifact bucket, logs and pre-migration snapshots.
+
+## 9. Files
 
 ```
-Orient_Internal_AI_Deployment/
-  terraform-pipeline/        # pipeline infra, separate state key, applied once by hand
-    main.tf                  #   CodePipeline V2, CodeBuild projects, EventBridge rule,
-                             #   SNS approval topic, artifact bucket (KMS), IAM roles
-  buildspec/
-    verify-tests.yml
-    verify-security.yml
-    verify-migrations.yml
-    build.yml
-    deploy.yml
-  scripts/
-    release.sh               # deploy-stage logic: snapshot, apply, migrate, test N, switch, smoke, rollback
+terraform-pipeline/   pipeline, CodeBuild projects, IAM roles, EventBridge trigger, SNS, artifact bucket, SSM marker
+buildspec/            tests.yml, security.yml, build.yml, deploy.yml
+pipeline/             build_package.py, release.py, check_migrations.sh, tests/ (unit tests)
+scripts/              release-api.ps1, rollback-api.ps1, deploy.ps1 (local Terraform), deploy-agent.ps1
 ```
 
-All new resources carry the six cost tags (Project, Application, Environment, Owner, CostCenter, ManagedBy).
-
-## 9. Estimated cost (unverified list prices, ap-south-1)
-
-| Item | Per release | 30 releases/month |
-|---|---|---|
-| CodeBuild (small/medium Linux, about 12-15 build minutes in total) | about $0.10-0.20 | $3-6 |
-| CodePipeline V2 (billed per action-execution minute) | a few cents | about $1-2 |
-| Artifact bucket, SNS, logs, KMS key | | about $1-2 |
-| Aurora snapshots before migrations (incremental) | | well under $1 |
-| **Total** | | **about $5-10 a month** |
-
-## 10. Rollout plan
-
-1. Terraform app-stack change for versions + alias (section 7). One manual apply; no downtime.
-2. Create `terraform-pipeline/` and the buildspecs; apply once by hand.
-3. Run the pipeline on the current commit and approve. Expected: no resource changes, a new Lambda version, alias moves, smoke test passes.
-4. Test a rollback on purpose (move the alias back and forth).
-5. Decide option A or B for the frontend (section 3, stage 6).
-6. Retire `scripts/deploy-api.ps1` for normal releases; keep it for emergencies.
-
-## Open decisions
-- Approver email address(es) for the SNS approval notice.
-- Frontend ordering: option A (Amplify auto-build, additive API changes) or option B (pipeline releases the frontend).
-- Whether to add a separate staging environment later (a second copy of the stack, with releases promoted from staging to production).
+Run the unit tests: `backend\.venv\Scripts\python -m pytest Orient_Internal_AI_Deployment/pipeline/tests -q`.

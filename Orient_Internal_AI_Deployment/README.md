@@ -1,47 +1,55 @@
-# Orient_Internal_AI deployment (architecture v2)
+# Orient_Internal_AI deployment
 
-Design: `docs/architecture-v2.md`. Account profile `Orient_Internal_AI`, region `ap-south-1`.
+Account `Orient_Internal_AI` (917511768830), region `ap-south-1`. Architecture: `docs/architecture-v2.md`.
+Deployed resources: `docs/deployed-resources.md`. Backend release pipeline: `docs/backend-cicd-pipeline.md`.
 
-| Part | Tool | Where |
-|---|---|---|
-| API Gateway, Lambda `api` + `ops`, Aurora Serverless v2 (Data API), Secrets Manager, S3, Amplify app + `/api` rewrite, GitHub OIDC role | Terraform (remote state in S3) | `terraform/` |
-| Cognito user pool (staff, MFA off, admin-created users only) | Amplify Gen 2 | `frontend/amplify/` |
-| SPA hosting | Amplify Hosting (zip deployment) | `scripts/deploy-frontend.ps1` |
-| Interview voice agent | AgentCore CLI (`@aws/agentcore`, CodeZip, no Docker) | `scripts/deploy-agent.ps1` |
-| Single CI/CD | GitHub Actions | `.github/workflows/deploy-orient-internal-ai.yml` |
+## Who deploys what
 
-All resources carry the cost tags Project, Application, Environment, Owner, CostCenter, ManagedBy
-(Terraform `default_tags`, Amplify `Tags.of`, AgentCore `agentcore.json` tags in the staged copy).
+| Part | How | Where | When |
+|---|---|---|---|
+| Infrastructure: API Gateway, Lambda config, Aurora (Data API), Secrets Manager, S3, IAM, Amplify app, CodeCommit | Terraform, **applied locally only** | `terraform/` | rarely, by hand |
+| Release pipeline itself | Terraform, applied locally only | `terraform-pipeline/` | rarely, by hand |
+| Backend **code** (`ora-staging-api`, `ora-staging-ops`) + DB migrations | CodePipeline `ora-staging-backend` | `pipeline/`, `buildspec/` | every push to CodeCommit `main`, after approval |
+| Frontend (React SPA) + Cognito (Amplify Gen 2) | Amplify Hosting, repo-connected | `amplify.yml`, `amplify-backend/` | every push to CodeCommit `main` |
+| Interview voice agent | AgentCore CLI (`@aws/agentcore`, CodeZip) | `scripts/deploy-agent.ps1` | by hand |
 
-## First deploy (from a developer machine)
+Git remotes: **CodeCommit** `orient-recruitment-accelerator` is the deployment source; GitHub `origin` is a backup.
+
+All resources carry the cost tags Project, Application, Environment, Owner, CostCenter, ManagedBy.
+
+## Everyday release
+1. Push to CodeCommit `main`.
+2. Amplify builds the frontend. The pipeline tests, scans and builds the backend; if backend code changed it emails
+   the approvers and waits.
+3. Approve in the email link or the CodePipeline console. The pipeline publishes the new Lambda version, migrates the
+   database, tests the new version, switches the `live` alias and smoke-tests. It rolls back the alias by itself if
+   the smoke test fails.
+
+Manual: `scripts\release-api.ps1` (start a release; `-Force` after a Lambda configuration change),
+`scripts\rollback-api.ps1` (point `live` at an earlier version in seconds).
+
+## Infrastructure change (local)
+```powershell
+aws sso login --profile Orient_Internal_AI
+cd Orient_Internal_AI_Deployment\terraform
+terraform plan        # review
+terraform apply
+```
+Changes to Lambda configuration (environment variables, memory, timeout) reach live traffic at the next release:
+run `scripts\release-api.ps1 -Force`. `scripts\deploy.ps1` applies both Terraform roots in order.
+
+## First-time setup of a new environment
 1. `aws sso login --profile Orient_Internal_AI`
-2. `.\scripts\deploy.ps1 -Seed` (omit `-Seed` for no synthetic users). Steps, in order:
-   state bucket -> AgentCore agent -> Lambda package -> Terraform -> lock agent runtime -> DB migrate ->
-   Amplify Gen 2 backend -> frontend. Use `-PlanOnly` to stop after `terraform plan`.
-3. In GitHub: set repo variable `AWS_DEPLOY_ROLE_ARN` to Terraform output `github_deploy_role_arn`; create the
-   `orient-internal-ai` environment (add required reviewers for release approval). Optional variables:
-   `AGENT_ADMIN_ROLE_ARN` (IAM role ARN allowed to invoke the agent for testing), `CREATE_GITHUB_OIDC_PROVIDER=false`
-   if the account already has the GitHub OIDC provider.
-4. After that, every push to `main` deploys everything.
+2. `scripts\deploy.ps1` (state bucket, app stack, pipeline). The Lambdas start with a placeholder that answers 503.
+3. Confirm the SNS email subscription for release approvals.
+4. Push to CodeCommit `main` and approve the first release. Seed synthetic users if needed:
+   `aws lambda invoke --function-name ora-staging-ops --payload '{"action":"seed"}' ...`
+5. Deploy the interview agent: `scripts\deploy-agent.ps1`, then set `agentcore_runtime_arn` in `terraform/` and apply.
 
-The AgentCore project in `interview-agent/InterviewAgent` is **not modified**: `deploy-agent.ps1` copies it to
-`.build/agent`, retargets it to this account and applies this account's tags, then runs `agentcore deploy`.
-
-## Data API prerequisite (must be verified before the first real deploy)
-The Lambdas reach Aurora with `ORA_DATABASE_URL=postgresql+auroradataapi://...` (package
-`sqlalchemy-aurora-data-api`, installed from `lambda-extra-requirements.txt`). The backend currently uses
-`postgresql+psycopg`. **Not yet verified:** that the app's models, UUID/JSONB columns, transactions and Alembic
-migrations work through that dialect, and that no psycopg-specific code (pool/connect args) breaks. Run the app tests
-and `alembic upgrade head` against a real Data API cluster first. Data API limits: responses over 1 MB and statements
-over about 45 s fail.
-
-## Known gaps
-- AgentCore -> HR API result webhook is not configured (results land in S3 only).
-- Cognito is provisioned but the app does not use it yet (phase 2: OIDC login + API Gateway JWT authorizer).
-- The CI role has AdministratorAccess (TODO: scope down). `ampx pipeline-deploy` outside Amplify Console builds,
-  `agentcore status --json` ARN parsing, and the AgentCore resource-policy command are untested.
-- Never commit `terraform/backend.hcl`, `.build/`, `.agent_runtime_arn` (already in `.gitignore`).
+## Never commit
+`terraform/backend.hcl`, `.build/`, `.agent_runtime_arn`, any `*.tfstate`, `*.tfvars`, `*.env` (see `.gitignore`).
 
 ## Tear down
-`deletion_protection` is on for Aurora and Cognito. Disable it first, then `terraform destroy`; the AgentCore stack
-`AgentCore-InterviewAgent-orientinternalai` and the Amplify Gen 2 stack are removed from CloudFormation.
+`deletion_protection` is on for Aurora and Cognito. Disable it first, then `terraform destroy` in
+`terraform-pipeline/` and `terraform/`; remove the AgentCore stack `AgentCore-InterviewAgent-default` with the
+AgentCore CLI and the Amplify Gen 2 stack from CloudFormation.

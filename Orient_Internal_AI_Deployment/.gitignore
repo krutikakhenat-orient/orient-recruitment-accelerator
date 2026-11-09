@@ -6,3 +6,8 @@ terraform/backend.hcl
 terraform/.app_base_url
 terraform/*.tfstate*
 terraform/*.tfvars
+terraform/*.tfplan
+terraform-pipeline/.terraform/
+terraform-pipeline/*.tfstate*
+terraform-pipeline/*.tfvars
+terraform-pipeline/*.tfplan
