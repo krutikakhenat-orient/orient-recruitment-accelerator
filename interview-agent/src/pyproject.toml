@@ -16,3 +16,10 @@ dependencies = [
   "httpx==0.28.1",
   "pipecat-ai[aws,silero,tracing]==1.15.0",
 ]
+
+# The AgentCore packager installs with `--only-binary :all:` (no source builds). `docopt`
+# (pulled in by pipecat-ai -> num2words) is published only as source, so a pure-Python wheel
+# built from that exact version is kept in ../wheels (outside src, so it is not zipped).
+# Rebuild it with: pip wheel "docopt==0.6.2" --no-deps -w ../wheels
+[tool.uv]
+find-links = ["../wheels"]
