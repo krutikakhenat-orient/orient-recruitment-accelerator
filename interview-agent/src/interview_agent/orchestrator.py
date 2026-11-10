@@ -11,6 +11,8 @@ import logging
 import re
 import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
 
@@ -69,6 +71,22 @@ class InterviewState(StrEnum):
     ENDED = "ended"
 
 
+@dataclass(frozen=True)
+class OrchestratorSnapshot:
+    """A copy of everything a turn can change, so a turn can be undone (see `restore`)."""
+
+    state: InterviewState
+    end_reason: EndReason | None
+    turns: tuple[TranscriptTurn, ...]
+    integrity_flags: tuple[str, ...]
+    skipped_question_ids: tuple[str, ...]
+    asked_question_ids: tuple[str, ...]
+    index: int
+    followups_used: int
+    ack_cursor: int
+    idle_prompts: int
+
+
 class InterviewOrchestrator:
     def __init__(
         self,
@@ -79,6 +97,7 @@ class InterviewOrchestrator:
         llm: LanguageModel,
         settings: Settings,
         clock: Callable[[], float] = time.monotonic,
+        trace_llm: Callable[[], AbstractContextManager[object]] | None = None,
     ) -> None:
         if not question_set.approved:
             raise ValueError("question_set_not_approved")
@@ -88,6 +107,8 @@ class InterviewOrchestrator:
         self._llm = llm
         self._settings = settings
         self._clock = clock
+        # Optional hook that wraps the one LLM call in a tracing span (observability.llm_span).
+        self.trace_llm = trace_llm
         self.state = InterviewState.NOT_STARTED
         self.end_reason: EndReason | None = None
         self.turns: list[TranscriptTurn] = []
@@ -115,8 +136,9 @@ class InterviewOrchestrator:
     def opening(self) -> list[str]:
         self._started_at = self._clock()
         self.state = InterviewState.ASKING
-        lines = [OPENING_TEMPLATE.format(role=self._role), *self._advance_to_next_question()]
-        return lines
+        greeting = OPENING_TEMPLATE.format(role=self._role)
+        self._record(Speaker.AGENT, greeting, None)  # the notice is part of the saved record
+        return [greeting, *self._advance_to_next_question()]
 
     def handle_candidate_utterance(self, raw_text: str) -> list[str]:
         """Process one finished candidate utterance; return the sentences the agent should speak."""
@@ -155,6 +177,41 @@ class InterviewOrchestrator:
             return self._speak_lines([self._followup(question, clean.text)], question)
 
         return [self._acknowledgement(), *self._advance_to_next_question()]
+
+    def repeat_current_question(self) -> list[str]:
+        """Say the current question again (it was cut off or not heard). Does not advance."""
+        question = self.current_question
+        if self.state is not InterviewState.ASKING or question is None:
+            return []
+        return self._speak_lines([question.text], question)
+
+    def snapshot(self) -> OrchestratorSnapshot:
+        return OrchestratorSnapshot(
+            state=self.state,
+            end_reason=self.end_reason,
+            turns=tuple(self.turns),
+            integrity_flags=tuple(self.integrity_flags),
+            skipped_question_ids=tuple(self.skipped_question_ids),
+            asked_question_ids=tuple(self.asked_question_ids),
+            index=self._index,
+            followups_used=self._followups_used,
+            ack_cursor=self._ack_cursor,
+            idle_prompts=self._idle_prompts,
+        )
+
+    def restore(self, snap: OrchestratorSnapshot) -> None:
+        """Undo every change made since `snap`. Used when the candidate kept talking after a
+        turn was processed: the half-answer is merged with the rest and processed once."""
+        self.state = snap.state
+        self.end_reason = snap.end_reason
+        self.turns = list(snap.turns)
+        self.integrity_flags = list(snap.integrity_flags)
+        self.skipped_question_ids = list(snap.skipped_question_ids)
+        self.asked_question_ids = list(snap.asked_question_ids)
+        self._index = snap.index
+        self._followups_used = snap.followups_used
+        self._ack_cursor = snap.ack_cursor
+        self._idle_prompts = snap.idle_prompts
 
     def on_idle(self) -> list[str]:
         """Called when the candidate has been silent for a while."""
@@ -210,12 +267,13 @@ class InterviewOrchestrator:
             + "\n\nWrite the single follow-up question now."
         )
         try:
-            raw = self._llm.complete(
-                system=FOLLOWUP_SYSTEM,
-                user=user,
-                max_tokens=self._settings.llm_turn_max_tokens,
-                temperature=0.4,
-            )
+            with self.trace_llm() if self.trace_llm else nullcontext():
+                raw = self._llm.complete(
+                    system=FOLLOWUP_SYSTEM,
+                    user=user,
+                    max_tokens=self._settings.llm_turn_max_tokens,
+                    temperature=0.4,
+                )
         except LanguageModelError:
             log.warning("followup_llm_failed", extra={"interview_id": str(self.interview_id)})
             return _FALLBACK_FOLLOWUP

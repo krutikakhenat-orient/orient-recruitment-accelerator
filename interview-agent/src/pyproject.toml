@@ -11,7 +11,8 @@ dependencies = [
   "pydantic==2.14.1",
   "pydantic-settings==2.14.1",
   "python-dotenv==1.2.4",
-  "boto3==1.43.125",
+  "boto3==1.43.117",  # matches botocore required by aiobotocore 3.10.0 (pipecat-ai[aws])
   "amazon-transcribe==0.6.4",
   "httpx==0.28.1",
+  "pipecat-ai[aws,silero,tracing]==1.15.0",
 ]

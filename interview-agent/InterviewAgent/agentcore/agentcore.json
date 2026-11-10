@@ -40,7 +40,9 @@
         { "name": "INTERVIEW_AGENT_POLLY_REGION", "value": "us-east-1" },
         { "name": "INTERVIEW_AGENT_MAX_INTERVIEW_SECONDS", "value": "1800" },
         { "name": "INTERVIEW_AGENT_ALLOW_TEXT_INPUT", "value": "true" },
-        { "name": "INTERVIEW_AGENT_S3_PREFIX", "value": "interviews/" }
+        { "name": "INTERVIEW_AGENT_S3_PREFIX", "value": "interviews/" },
+        { "name": "INTERVIEW_AGENT_VOICE_ENGINE", "value": "pipecat" },
+        { "name": "INTERVIEW_AGENT_OTEL_ENABLED", "value": "false" }
       ]
     }
   ],
