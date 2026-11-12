@@ -9,7 +9,17 @@
     <title>Orient Recruitment Accelerator</title>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Shown until the app's JavaScript loads (React replaces it), so the page is never blank. -->
+    <div id="root">
+      <div
+        role="status"
+        aria-live="polite"
+        style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#5f6168;background:#fafafa"
+      >
+        <img src="/orient-logo.png" width="56" height="56" alt="Orient Recruitment Accelerator logo" onerror="this.src='/orient-logo.svg'" />
+        <span>Loading…</span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

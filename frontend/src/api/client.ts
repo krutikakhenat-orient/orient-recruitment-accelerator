@@ -3,6 +3,8 @@
 
 import { z } from "zod";
 
+import { startupFetch } from "../lib/startup";
+
 const errorEnvelope = z.object({
   error: z.object({
     code: z.string(),
@@ -39,9 +41,10 @@ let inflightRefresh: Promise<boolean> | null = null;
 
 export function refreshSession(): Promise<boolean> {
   // Single-flight: concurrent callers share one request (refresh tokens rotate on use).
+  // startupFetch waits out a database resume, so a sleeping database does not log the user out.
   inflightRefresh ??= (async () => {
     try {
-      const resp = await fetch("/api/v1/auth/refresh", {
+      const resp = await startupFetch("/api/v1/auth/refresh", {
         method: "POST",
         headers: { "X-Requested-With": "ora-web" },
         credentials: "same-origin",
@@ -80,7 +83,9 @@ export async function apiFetch<T>(
   headers.set("Content-Type", "application/json");
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
 
-  const resp = await fetch(path, { ...init, headers });
+  // startupFetch: while the database resumes from auto-pause it shows "We are starting up"
+  // and retries, so the caller only ever sees the final answer.
+  const resp = await startupFetch(path, { ...init, headers });
 
   // The short-lived access token expired mid-session: renew it once and retry, instead of
   // bouncing the user to the login screen.

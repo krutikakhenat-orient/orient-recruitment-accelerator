@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 
+import { startupFetch } from "../lib/startup";
 import { apiFetch } from "./client";
 
 const uuid = z.string();
@@ -178,7 +179,7 @@ export const listUsers = (includeInactive = false) =>
 
 // Soft-delete (deactivate) a staff user. Requires user.manage server-side. Returns on 204.
 export async function deleteUser(userId: string, token: string): Promise<void> {
-  const resp = await fetch(`/api/v1/users/${userId}`, {
+  const resp = await startupFetch(`/api/v1/users/${userId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -197,7 +198,7 @@ export async function uploadJd(campaignId: string, file: File, token: string): P
   const form = new FormData();
   form.append("campaign_id", campaignId);
   form.append("file", file);
-  const resp = await fetch("/api/v1/job-descriptions/upload", {
+  const resp = await startupFetch("/api/v1/job-descriptions/upload", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: form,
@@ -400,7 +401,7 @@ export async function bulkIntakeWalkInResumes(
   form.append("campaign_id", campaignId);
   form.append("consent_attested", String(consentAttested));
   for (const f of files) form.append("files", f);
-  const resp = await fetch("/api/v1/applications/walk-in-intake", {
+  const resp = await startupFetch("/api/v1/applications/walk-in-intake", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: form,
@@ -654,7 +655,7 @@ export async function downloadResume(
 ): Promise<{ blob: Blob; contentType: string; isOriginal: boolean } | null> {
   const url =
     resumeDownloadPath(applicationId) + (opts.allowTextFallback ? "?fallback=text" : "");
-  const resp = await fetch(url, {
+  const resp = await startupFetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (resp.status === 404) return null;
@@ -745,7 +746,7 @@ export async function downloadCampaignExport(
   campaignId: string,
   token: string,
 ): Promise<{ blob: Blob; contentType: string } | null> {
-  const resp = await fetch(campaignExportPath(campaignId), {
+  const resp = await startupFetch(campaignExportPath(campaignId), {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (resp.status === 404) return null;
@@ -835,7 +836,7 @@ export async function removeInterviewAssignment(
   assignmentId: string,
   token: string,
 ): Promise<void> {
-  const resp = await fetch(`/api/v1/interviews/assignments/${assignmentId}`, {
+  const resp = await startupFetch(`/api/v1/interviews/assignments/${assignmentId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -969,7 +970,7 @@ export type PublicForm = {
 };
 
 async function publicGet<T>(path: string): Promise<T> {
-  const resp = await fetch(path);
+  const resp = await startupFetch(path);
   const body: unknown = await resp.json().catch(() => null);
   if (!resp.ok) {
     const msg =
@@ -995,7 +996,7 @@ export async function submitPublicApplication(
   const form = new FormData();
   form.append("answers", JSON.stringify(answers));
   form.append("resume", resume);
-  const resp = await fetch(`/api/v1/public/campaigns/${campaignId}/apply`, {
+  const resp = await startupFetch(`/api/v1/public/campaigns/${campaignId}/apply`, {
     method: "POST",
     body: form,
   });
@@ -1017,7 +1018,7 @@ export type ResumePreview = { extracted: boolean; fields: Record<string, string>
 export async function previewResume(resume: File): Promise<ResumePreview> {
   const form = new FormData();
   form.append("resume", resume);
-  const resp = await fetch("/api/v1/public/resume-preview", { method: "POST", body: form });
+  const resp = await startupFetch("/api/v1/public/resume-preview", { method: "POST", body: form });
   const body: unknown = await resp.json().catch(() => null);
   if (!resp.ok) {
     const msg =
@@ -1093,7 +1094,7 @@ export async function fetchInductionVideoBlob(
   const signed = await fetchSignedInductionVideo(token);
   if (signed) return signed;
 
-  const resp = await fetch("/api/v1/induction/video/stream", {
+  const resp = await startupFetch("/api/v1/induction/video/stream", {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!resp.ok) {
@@ -1120,7 +1121,7 @@ async function fetchSignedInductionVideo(
 ): Promise<{ blob: Blob; contentType: string } | null> {
   let link: z.infer<typeof inductionVideoUrl>;
   try {
-    const linkResp = await fetch("/api/v1/induction/video/url", {
+    const linkResp = await startupFetch("/api/v1/induction/video/url", {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!linkResp.ok) return null;
@@ -1128,6 +1129,7 @@ async function fetchSignedInductionVideo(
   } catch {
     return null;
   }
+  // Signed S3 URL (not our API): plain fetch, no startup handling.
   const resp = await fetch(link.url);
   if (!resp.ok) throw new Error(`Could not load the induction video (${resp.status})`);
   return { blob: await resp.blob(), contentType: link.content_type };
@@ -1138,7 +1140,7 @@ async function fetchSignedInductionVideo(
 // until the status reports completed=true. Returns the HTML text so the UI can open it in a
 // new tab for viewing/printing.
 export async function fetchInductionCertificate(token: string): Promise<string> {
-  const resp = await fetch("/api/v1/induction/certificate", {
+  const resp = await startupFetch("/api/v1/induction/certificate", {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!resp.ok) {
@@ -1161,7 +1163,7 @@ export async function fetchInductionCertificate(token: string): Promise<string> 
 export async function downloadInductionCertificate(
   token: string,
 ): Promise<{ blob: Blob; filename: string }> {
-  const resp = await fetch("/api/v1/induction/certificate", {
+  const resp = await startupFetch("/api/v1/induction/certificate", {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!resp.ok) {

@@ -3,6 +3,7 @@ import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { Logo } from "../components/Logo";
 import { OrientAssistant } from "../components/OrientAssistant";
+import { StartupScreen } from "../components/StartupScreen";
 import { AdminPage } from "../pages/AdminPage";
 import { AiInterviewPage } from "../pages/AiInterviewPage";
 import { ApprovalsPage } from "../pages/ApprovalsPage";
@@ -41,7 +42,8 @@ function RequireAuth({ children }: { children: ReactNode }): ReactNode {
   // Don't decide logged-in vs logged-out until an existing token's session has been
   // restored; otherwise a deep link (e.g. the Excel "Download Resume" URL) opened in a live
   // session would be bounced to login before auth finishes establishing.
-  if (bootstrapping) return null;
+  // Never a blank page: show the branded placeholder while the session is restored.
+  if (bootstrapping) return <StartupScreen phase="loading" />;
   if (!actor) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   return children;
 }

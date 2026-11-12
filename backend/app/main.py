@@ -7,21 +7,24 @@ in services, never here.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 
 import jwt
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import Environment, get_settings
 from app.core.correlation import get_correlation_id, new_correlation_id, set_correlation_id
 from app.core.errors import AppError, error_envelope
 from app.core.logging import configure_logging, get_logger
-from app.db.session import engine
+from app.db.dataapi import is_database_resuming, resume_wait_limit
+from app.db.session import engine, get_db
 from app.modules.ai_interviews.router import router as ai_interviews_router
 from app.modules.applications.router import public_router as applications_public_router
 from app.modules.applications.router import router as applications_router
@@ -72,11 +75,40 @@ _SWAGGER_CSP = (
 )
 
 
+# Paused-database handling (Aurora Serverless auto-pause). Interactive requests wait only briefly
+# for a resume, then answer 503 "service_starting" so the browser shows "We are starting up" and
+# retries, instead of hanging on a blank page. Machine callers keep the full wait.
+INTERACTIVE_RESUME_WAIT_SECONDS = 6.0
+_FULL_RESUME_WAIT_PATHS = ("/api/v1/ai-interviews/webhook",)
+SERVICE_STARTING_RETRY_AFTER_SECONDS = 3
+
+
+def resume_wait_for_path(path: str) -> float | None:
+    """Seconds a request may wait for a resuming database (None = full budget)."""
+    if path.startswith(_FULL_RESUME_WAIT_PATHS):
+        return None
+    return INTERACTIVE_RESUME_WAIT_SECONDS
+
+
+def service_starting_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": str(SERVICE_STARTING_RETRY_AFTER_SECONDS)},
+        content=error_envelope(
+            code="service_starting",
+            message="We are starting up. Please wait a few seconds.",
+            correlation_id=get_correlation_id(),
+        ),
+    )
+
+
 class CorrelationAndSecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
         correlation_id = request.headers.get("X-Correlation-ID") or new_correlation_id()
         set_correlation_id(correlation_id)
-        response = await call_next(request)
+        # Context variables set here propagate to the endpoint (and its worker thread).
+        with resume_wait_limit(resume_wait_for_path(request.url.path)):
+            response = await call_next(request)
         response.headers["X-Correlation-ID"] = correlation_id
         # Security headers (defence in depth; proxy may also set these).
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -160,6 +192,10 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unexpected(_: Request, exc: Exception) -> JSONResponse:
+        # The database is resuming from auto-pause: an expected, temporary state, not an error.
+        if is_database_resuming(exc):
+            logger.info("Database resuming; answered 503 service_starting")
+            return service_starting_response()
         # Never leak internal details for unexpected errors.
         logger.error("Unhandled exception", exc_info=exc)
         return JSONResponse(
@@ -221,6 +257,30 @@ def _register_health(app: FastAPI, settings_environment: Environment) -> None:
             logger.warning("Readiness check failed", exc_info=exc)
             return {"status": "degraded", "database": "unavailable"}
         return {"status": "ready", "database": "ok"}
+
+    # Public startup probe for the browser (under /api so the Amplify rewrite reaches it). It
+    # never waits: if the database is paused, the first call starts the resume and answers
+    # 503 service_starting at once. No authentication and no data: only "ready" or "starting".
+    @app.get("/api/v1/system/status", tags=["system"], response_model=None)
+    def system_status(db: Session = Depends(get_db)) -> dict[str, str] | JSONResponse:
+        with resume_wait_limit(0):
+            try:
+                db.execute(text("SELECT 1"))
+            except Exception as exc:  # noqa: BLE001 - the probe must report, not crash
+                with contextlib.suppress(Exception):
+                    db.rollback()  # leave the session clean for get_db's commit
+                if is_database_resuming(exc):
+                    return service_starting_response()
+                logger.warning("Status probe failed", exc_info=exc)
+                return JSONResponse(
+                    status_code=503,
+                    content=error_envelope(
+                        code="service_unavailable",
+                        message="The service is temporarily unavailable.",
+                        correlation_id=get_correlation_id(),
+                    ),
+                )
+        return {"status": "ready"}
 
 
 app = create_app()

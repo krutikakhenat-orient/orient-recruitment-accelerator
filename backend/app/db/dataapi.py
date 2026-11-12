@@ -9,15 +9,20 @@ This module registers a subclass of the upstream dialect, under the same URL nam
 ``Uuid`` type binds values as text cast to ``uuid`` and converts results back to ``uuid.UUID``.
 
 It also retries Data API calls while an auto-paused Aurora cluster resumes
-(``DatabaseResumingException``, typically 15-30 s), so the first request after an idle period
-waits instead of failing with a 500.
+(``DatabaseResumingException``, typically 4-30 s). How long a caller waits is set per context
+(``resume_wait_limit``): background work (migrations, seeding, the agent webhook) waits the full
+budget, while interactive web requests wait only briefly and then report "service starting" so
+the browser can show a "We are starting up" screen instead of a blank page.
 """
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 import time
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 from sqlalchemy import cast, util
@@ -27,8 +32,44 @@ from sqlalchemy.sql import sqltypes
 _REGISTERED = False
 _log = logging.getLogger(__name__)
 
-# Total wait budget stays under the API Gateway 29 s integration timeout.
+# Full wait budget (25 s): stays under the API Gateway 29 s integration timeout.
 _RESUME_DELAYS_SECONDS = (1.0, 2.0, 3.0, 4.0, 5.0, 5.0, 5.0)
+RESUMING_ERROR_CODE = "DatabaseResumingException"
+
+# Seconds this context may spend waiting for a resume. None = the full budget.
+_resume_wait_limit: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "ora_resume_wait_limit", default=None
+)
+
+
+@contextlib.contextmanager
+def resume_wait_limit(seconds: float | None) -> Iterator[None]:
+    """Limit how long Data API calls in this context wait for a resuming database.
+
+    ``0`` fails immediately (the first call still starts the resume); ``None`` waits the full
+    budget. Applies to the current task/thread context only.
+    """
+    token = _resume_wait_limit.set(seconds)
+    try:
+        yield
+    finally:
+        _resume_wait_limit.reset(token)
+
+
+def is_database_resuming(exc: BaseException | None) -> bool:
+    """True if ``exc`` (or anything it wraps) is the Data API's 'database is resuming' error."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        response = getattr(exc, "response", None)
+        if (
+            isinstance(response, dict)
+            and response.get("Error", {}).get("Code") == RESUMING_ERROR_CODE
+        ):
+            return True
+        # SQLAlchemy wraps DBAPI errors in .orig; Python chains in __cause__ / __context__.
+        exc = getattr(exc, "orig", None) or exc.__cause__ or exc.__context__
+    return False
 
 
 class _ResumeRetryingClient:
@@ -43,15 +84,20 @@ class _ResumeRetryingClient:
             return attr
 
         def call(*args: Any, **kwargs: Any) -> Any:
+            limit = _resume_wait_limit.get()
+            waited = 0.0
             for delay in (*_RESUME_DELAYS_SECONDS, None):
                 try:
                     return attr(*args, **kwargs)
                 except Exception as exc:
                     code = getattr(exc, "response", {}).get("Error", {}).get("Code")
-                    if code != "DatabaseResumingException" or delay is None:
+                    if code != RESUMING_ERROR_CODE or delay is None:
                         raise
+                    if limit is not None and waited + delay > limit:
+                        raise  # caller asked not to wait this long; it reports "starting"
                     _log.info("database resuming from auto-pause; retrying in %.0fs", delay)
                     time.sleep(delay)
+                    waited += delay
             raise AssertionError("unreachable")
 
         return call

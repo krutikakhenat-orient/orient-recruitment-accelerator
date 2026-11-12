@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import { App } from "./app/App";
 import { AuthProvider } from "./app/auth-context";
+import { StartupGate } from "./components/StartupGate";
 import { ToastProvider } from "./components/toast";
 import "./styles.css";
 
@@ -19,11 +20,14 @@ createRoot(rootEl).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <AuthProvider>
-          <ToastProvider>
-            <App />
-          </ToastProvider>
-        </AuthProvider>
+        {/* Shows "We are starting up" until the API and database answer (no blank page). */}
+        <StartupGate>
+          <AuthProvider>
+            <ToastProvider>
+              <App />
+            </ToastProvider>
+          </AuthProvider>
+        </StartupGate>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,
