@@ -163,8 +163,16 @@ def test_public_open_roles_lists_only_open_roles_and_no_internal_fields(client, 
     assert all(r["title"] != "Not Yet Open" for r in roles)
     # Only candidate-facing fields are exposed — nothing internal leaks.
     sample = next(r for r in roles if r["id"] == str(open_campaign_id))
-    assert set(sample) <= {"id", "title", "location", "employment_type", "work_mode"}
-    for leaked in ("organisation_id", "state", "approved_form_version_id", "version"):
+    # Allowed: the job's basics plus the candidate-facing parts of the APPROVED JD.
+    assert set(sample) <= {
+        "id", "title", "location", "employment_type", "work_mode",
+        "department", "number_of_openings", "minimum_experience_years",
+        "responsibilities", "must_have_skills", "nice_to_have_skills", "posted_at",
+    }
+    for leaked in (
+        "organisation_id", "state", "approved_form_version_id", "version",
+        "rule_set", "threshold", "extraction_draft", "score",
+    ):
         assert leaked not in sample
 
 

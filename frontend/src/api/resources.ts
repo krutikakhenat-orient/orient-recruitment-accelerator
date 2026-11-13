@@ -961,7 +961,18 @@ export type PublicRole = {
   location: string | null;
   employment_type: string | null;
   work_mode: string | null;
+  // From the APPROVED job description (empty when there is none yet).
+  department?: string | null;
+  number_of_openings?: number | null;
+  minimum_experience_years?: number | null;
+  responsibilities?: string[];
+  must_have_skills?: string[];
+  nice_to_have_skills?: string[];
+  posted_at?: string | null;
 };
+
+export const getOpenRole = (id: string): Promise<PublicRole> =>
+  publicGet<PublicRole>(`/api/v1/public/open-roles/${id}`);
 
 // A field on a role's approved application form, as rendered dynamically by the public page.
 export type PublicFormField = {

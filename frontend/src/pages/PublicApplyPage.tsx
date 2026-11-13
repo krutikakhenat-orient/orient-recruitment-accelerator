@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
 import {
   getPublicRoleForm,
@@ -10,6 +10,9 @@ import {
   type PublicFormField,
   type PublicRole,
 } from "../api/resources";
+import { BarChart3, Briefcase, Building2, MapPin } from "lucide-react";
+
+import { COMPANY, JobsBoard, experienceLine, levelOf, pretty } from "../components/JobsBoard";
 import { Logo } from "../components/Logo";
 import { Button, Field } from "../components/ui";
 import { NEXT_FOR_CANDIDATE } from "../lib/guideContent";
@@ -108,13 +111,19 @@ export function PublicApplyPage(): ReactNode {
   }, [selectedId]);
 
 
-  const [jobSearch, setJobSearch] = useState("");
   // The chosen job, only if it is actually open (a stale deep link falls back to the board).
   const selectedRole = roles?.find((r) => r.id === selectedId) ?? null;
-  const needle = jobSearch.trim().toLowerCase();
-  const visibleRoles = (roles ?? []).filter(
-    (r) => !needle || `${r.title} ${r.location ?? ""}`.toLowerCase().includes(needle),
-  );
+  const navigate = useNavigate();
+  // Each job has its own shareable address (/apply/<id>); the board is /apply.
+  const openJob = (id: string): void => {
+    setSelectedId(id);
+    navigate(id ? `/apply/${id}` : "/apply");
+    window.scrollTo({ top: 0 });
+  };
+  // Browser back/forward between the board and a job keeps the page in step.
+  useEffect(() => {
+    setSelectedId(paramCampaignId ?? "");
+  }, [paramCampaignId]);
 
   const setValue = (key: string, value: AnswerValue): void =>
     setAnswers((a) => ({ ...a, [key]: value }));
@@ -222,99 +231,64 @@ export function PublicApplyPage(): ReactNode {
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: "32px auto", padding: 20 }}>
-      <div className="apply-brandbar">
-        <Logo size={40} title="Orient" />
-        <span className="apply-brandbar__name">Orient Recruitment</span>
-      </div>
-      <div className="page-head">
-        <h1>{selectedRole ? `Apply: ${selectedRole.title}` : "Job openings at Orient"}</h1>
-        <p>
-          {selectedRole
-            ? "Complete the form below. Fields marked * are required."
-            : "These are all the jobs open for applications right now. Choose one to apply. No account is needed."}
-        </p>
-      </div>
+    <div className={selectedRole ? "careers careers--job" : "careers"}>
+      <header className="careers__bar">
+        <a
+          href="/apply"
+          className="careers__brand"
+          onClick={(e) => {
+            e.preventDefault();
+            openJob("");
+          }}
+        >
+          <Logo size={30} title="Orient" />
+          <span>Orient Careers</span>
+        </a>
+      </header>
 
       {/* Jobs board: every role HR has opened for applications. Jobs still being set up are
           not listed because they cannot take applications yet. */}
       {!selectedRole && (
-        <div className="card">
+        <>
           {rolesError && <div className="error-summary" role="alert">{rolesError}</div>}
           {!roles && !rolesError && <p className="subtle">Loading job openings…</p>}
-          {roles && roles.length === 0 && (
-            <>
-              <h2 style={{ marginTop: 0 }}>No open positions right now</h2>
-              <p className="subtle">
-                There are no jobs accepting applications at the moment. Please check back later.
-              </p>
-            </>
-          )}
           {deepLink && roles && !roles.some((r) => r.id === paramCampaignId) && (
-            <p role="status">
+            <p role="status" className="careers__note">
               The job in your link is no longer taking applications.
               {roles.length > 0 ? " You can apply to one of the open jobs below." : ""}
             </p>
           )}
-          {roles && roles.length > 0 && (
-            <>
-              {roles.length > 6 && (
-                <div className="jobs-search">
-                  <label htmlFor="job-search" className="sr-only">
-                    Search jobs
-                  </label>
-                  <input
-                    id="job-search"
-                    value={jobSearch}
-                    onChange={(e) => setJobSearch(e.target.value)}
-                    placeholder="Search by job title or location…"
-                  />
-                </div>
-              )}
-              <p className="subtle" style={{ marginTop: 0 }}>
-                {roles.length} open {roles.length === 1 ? "job" : "jobs"}
+          {roles && roles.length === 0 && (
+            <div className="job-result">
+              <h2 style={{ marginTop: 0 }}>No open positions right now</h2>
+              <p className="subtle mb-0">
+                There are no jobs accepting applications at the moment. Please check back later.
               </p>
-              <ul className="jobs-board" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                {visibleRoles.map((r) => (
-                  <li key={r.id}>
-                    <button
-                      type="button"
-                      className="job-card"
-                      aria-pressed={selectedId === r.id}
-                      onClick={() => setSelectedId(r.id)}
-                      style={{ width: "100%" }}
-                    >
-                      <span className="job-card__title">{r.title}</span>
-                      <span className="job-card__meta">
-                        {[r.location, r.work_mode, r.employment_type]
-                          .filter((v): v is string => Boolean(v))
-                          .map((v) => (
-                            <span key={v} className="job-card__chip">
-                              {prettyMeta(v)}
-                            </span>
-                          ))}
-                      </span>
-                      <span className="job-card__cta">Apply for this job →</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {visibleRoles.length === 0 && <p className="subtle">No jobs match your search.</p>}
-            </>
+            </div>
           )}
-        </div>
+          {roles && roles.length > 0 && (
+            <JobsBoard
+              roles={roles}
+              onOpen={openJob}
+              jobUrl={(id) => `${window.location.origin}/apply/${id}`}
+            />
+          )}
+        </>
       )}
 
       {selectedRole && (
-        <div className="card" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ flex: 1 }}>
-            <strong>{selectedRole.title}</strong>
-            <span className="subtle"> {roleLabel(selectedRole).slice(selectedRole.title.length)}</span>
-          </div>
-          <Button small onClick={() => setSelectedId("")}>
-            See all jobs
-          </Button>
-        </div>
+        <>
+          <button type="button" className="careers__back" onClick={() => openJob("")}>
+            ← All jobs
+          </button>
+          <JobDetail role={selectedRole} />
+          <h2 id="apply-form" className="careers__apply-h">
+            Apply for this job
+          </h2>
+          <p className="subtle" style={{ marginTop: 0 }}>
+            No account needed. Fields marked * are required.
+          </p>
+        </>
       )}
 
 
@@ -376,16 +350,84 @@ export function PublicApplyPage(): ReactNode {
   );
 }
 
-function prettyMeta(value: string): string {
-  const s = value.replace(/_/g, " ");
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function roleLabel(r: PublicRole): string {
-  const bits = [r.title];
-  if (r.location) bits.push(r.location);
-  if (r.work_mode) bits.push(r.work_mode);
-  return bits.join(" — ");
+/* The full job description for one job (approved content only), with an Apply button that
+   jumps to the form below. */
+function JobDetail({ role }: { role: PublicRole }): ReactNode {
+  const exp = experienceLine(role);
+  const must = role.must_have_skills ?? [];
+  const nice = role.nice_to_have_skills ?? [];
+  const resp = role.responsibilities ?? [];
+  return (
+    <article className="job-result job-detail" aria-labelledby="job-detail-h">
+      <h1 id="job-detail-h" className="job-result__title">
+        {role.title}
+        {role.department ? `, ${role.department}` : ""}
+      </h1>
+      <ul className="job-result__meta">
+        <li>
+          <Building2 size={15} aria-hidden="true" /> {COMPANY}
+        </li>
+        {role.location && (
+          <li>
+            <MapPin size={15} aria-hidden="true" /> {role.location}
+          </li>
+        )}
+        {role.work_mode && (
+          <li>
+            <Briefcase size={15} aria-hidden="true" /> {pretty(role.work_mode)}
+            {role.employment_type ? ` · ${pretty(role.employment_type)}` : ""}
+          </li>
+        )}
+        {levelOf(role) !== "Not specified" && (
+          <li>
+            <BarChart3 size={15} aria-hidden="true" /> {levelOf(role)}
+          </li>
+        )}
+        {role.number_of_openings ? (
+          <li>
+            {role.number_of_openings} {role.number_of_openings === 1 ? "opening" : "openings"}
+          </li>
+        ) : null}
+      </ul>
+      <a className="btn btn--primary" href="#apply-form">
+        Apply
+      </a>
+      {(exp || must.length > 0) && (
+        <section className="job-result__quals">
+          <h2>Minimum qualifications</h2>
+          <ul>
+            {exp && <li>{exp}</li>}
+            {must.map((s) => (
+              <li key={s}>Experience with {s}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {nice.length > 0 && (
+        <section className="job-result__quals">
+          <h2>Preferred qualifications</h2>
+          <ul>
+            {nice.map((s) => (
+              <li key={s}>Experience with {s}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {resp.length > 0 && (
+        <section className="job-result__quals">
+          <h2>Responsibilities</h2>
+          <ul>
+            {resp.map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {!exp && must.length === 0 && nice.length === 0 && resp.length === 0 && (
+        <p className="subtle">The full job description will be shared during the process.</p>
+      )}
+    </article>
+  );
 }
 
 function initialAnswers(fields: PublicFormField[]): Record<string, AnswerValue> {
