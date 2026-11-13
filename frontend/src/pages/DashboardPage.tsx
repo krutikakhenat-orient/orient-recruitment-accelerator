@@ -13,6 +13,8 @@ import {
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
 import { HowItWorksCard } from "../components/FlowDiagram";
+import { JobProgressCard } from "../components/JobProgressCard";
+import { plainCampaignStatus } from "../lib/campaignStatus";
 import { JourneyButton } from "../components/JourneyButton";
 import {
   Badge,
@@ -109,6 +111,7 @@ export function DashboardPage(): ReactNode {
         reviewItems={canReview ? (dash.data?.open_review_items ?? 0) : 0}
         loading={canReview && dash.isLoading}
       />
+      <JobProgressCard />
       <HowItWorksCard />
       {canReview && (
         <>
@@ -158,7 +161,9 @@ export function DashboardPage(): ReactNode {
                     <td>{c.position_title}</td>
                     <td>{c.number_of_openings}</td>
                     <td>
-                      <Badge tone={toneFor(c.state)}>{prettify(c.state)}</Badge>
+                      <Badge tone={plainCampaignStatus(c.state).tone}>
+                        {plainCampaignStatus(c.state).label}
+                      </Badge>
                     </td>
                   </tr>
                 ))}

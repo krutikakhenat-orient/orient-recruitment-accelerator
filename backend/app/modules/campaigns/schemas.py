@@ -72,6 +72,17 @@ class CampaignSetupStatusRead(BaseModel):
     draft_form_version_id: uuid.UUID | None
 
 
+class CampaignSetupOverviewRead(BaseModel):
+    """One job on the dashboard's "Jobs you are setting up" list: its checklist plus the
+    names HR recognises. Read-only; no candidate data."""
+
+    campaign_id: uuid.UUID
+    name: str
+    position_title: str
+    state: str
+    setup: CampaignSetupStatusRead
+
+
 class CampaignRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

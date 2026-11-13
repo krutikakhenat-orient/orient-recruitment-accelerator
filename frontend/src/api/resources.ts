@@ -110,6 +110,20 @@ export const campaignSetupStatus = z
 export type CampaignSetupStatus = z.infer<typeof campaignSetupStatus>;
 export const getCampaignSetupStatus = (id: string) =>
   apiFetch(`/api/v1/campaigns/${id}/setup-status`, campaignSetupStatus);
+
+// Dashboard: the checklist of every job the signed-in user works on (assigned jobs only).
+const setupOverviewItem = z
+  .object({
+    campaign_id: uuid,
+    name: z.string(),
+    position_title: z.string(),
+    state: z.string(),
+    setup: campaignSetupStatus,
+  })
+  .passthrough();
+export type SetupOverviewItem = z.infer<typeof setupOverviewItem>;
+export const getSetupOverview = () =>
+  apiFetch("/api/v1/campaigns/setup-overview", z.array(setupOverviewItem));
 // Open a fully set-up job for applications (needs campaign.publish). Every internal step
 // is permission-checked and audited server-side.
 export const openForApplications = (id: string) =>

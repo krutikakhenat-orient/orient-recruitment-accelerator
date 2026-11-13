@@ -74,9 +74,9 @@ export function PublicApplyPage(): ReactNode {
     listOpenRoles()
       .then((r) => {
         if (!active) return;
+        // No auto-select: candidates always see the full list of open jobs first (a deep link
+        // still opens its job directly).
         setRoles(r);
-        // Auto-select only when nothing is selected yet and exactly one role is open.
-        setSelectedId((current) => (current ? current : r.length === 1 ? r[0]!.id : ""));
       })
       .catch((e: unknown) => active && setRolesError(e instanceof Error ? e.message : "Could not load roles."));
     return () => {
@@ -107,6 +107,14 @@ export function PublicApplyPage(): ReactNode {
     };
   }, [selectedId]);
 
+
+  const [jobSearch, setJobSearch] = useState("");
+  // The chosen job, only if it is actually open (a stale deep link falls back to the board).
+  const selectedRole = roles?.find((r) => r.id === selectedId) ?? null;
+  const needle = jobSearch.trim().toLowerCase();
+  const visibleRoles = (roles ?? []).filter(
+    (r) => !needle || `${r.title} ${r.location ?? ""}`.toLowerCase().includes(needle),
+  );
 
   const setValue = (key: string, value: AnswerValue): void =>
     setAnswers((a) => ({ ...a, [key]: value }));
@@ -220,42 +228,102 @@ export function PublicApplyPage(): ReactNode {
         <span className="apply-brandbar__name">Orient Recruitment</span>
       </div>
       <div className="page-head">
-        <h1>Apply to Orient</h1>
-        <p>Choose the role you&rsquo;d like to apply for, then complete the form. Fields marked * are required.</p>
+        <h1>{selectedRole ? `Apply: ${selectedRole.title}` : "Job openings at Orient"}</h1>
+        <p>
+          {selectedRole
+            ? "Complete the form below. Fields marked * are required."
+            : "These are all the jobs open for applications right now. Choose one to apply. No account is needed."}
+        </p>
       </div>
 
-      {/* Role picker — always shown so the candidate can pick/switch the target position,
-          whether they arrived via /apply or a direct campaign link. */}
-      <div className="card">
-        {rolesError && <div className="error-summary" role="alert">{rolesError}</div>}
-        {!roles && !rolesError && <p className="subtle">Loading open roles…</p>}
-        {roles && roles.length === 0 && (
-          <>
-            <h2 style={{ marginTop: 0 }}>No open positions right now</h2>
-            <p className="subtle">
-              There are no roles accepting applications at the moment. Please check back later.
+      {/* Jobs board: every role HR has opened for applications. Jobs still being set up are
+          not listed because they cannot take applications yet. */}
+      {!selectedRole && (
+        <div className="card">
+          {rolesError && <div className="error-summary" role="alert">{rolesError}</div>}
+          {!roles && !rolesError && <p className="subtle">Loading job openings…</p>}
+          {roles && roles.length === 0 && (
+            <>
+              <h2 style={{ marginTop: 0 }}>No open positions right now</h2>
+              <p className="subtle">
+                There are no jobs accepting applications at the moment. Please check back later.
+              </p>
+            </>
+          )}
+          {deepLink && roles && !roles.some((r) => r.id === paramCampaignId) && (
+            <p role="status">
+              The job in your link is no longer taking applications.
+              {roles.length > 0 ? " You can apply to one of the open jobs below." : ""}
             </p>
-          </>
-        )}
-        {roles && roles.length > 0 && (
-          <Field label="Role you are applying for *" htmlFor="role-select">
-            <select id="role-select" value={selectedId} onChange={(e) => setSelectedId(e.target.value)} required>
-              <option value="">Choose a role…</option>
-              {roles.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {roleLabel(r)}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-      </div>
+          )}
+          {roles && roles.length > 0 && (
+            <>
+              {roles.length > 6 && (
+                <div className="jobs-search">
+                  <label htmlFor="job-search" className="sr-only">
+                    Search jobs
+                  </label>
+                  <input
+                    id="job-search"
+                    value={jobSearch}
+                    onChange={(e) => setJobSearch(e.target.value)}
+                    placeholder="Search by job title or location…"
+                  />
+                </div>
+              )}
+              <p className="subtle" style={{ marginTop: 0 }}>
+                {roles.length} open {roles.length === 1 ? "job" : "jobs"}
+              </p>
+              <ul className="jobs-board" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {visibleRoles.map((r) => (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      className="job-card"
+                      aria-pressed={selectedId === r.id}
+                      onClick={() => setSelectedId(r.id)}
+                      style={{ width: "100%" }}
+                    >
+                      <span className="job-card__title">{r.title}</span>
+                      <span className="job-card__meta">
+                        {[r.location, r.work_mode, r.employment_type]
+                          .filter((v): v is string => Boolean(v))
+                          .map((v) => (
+                            <span key={v} className="job-card__chip">
+                              {prettyMeta(v)}
+                            </span>
+                          ))}
+                      </span>
+                      <span className="job-card__cta">Apply for this job →</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {visibleRoles.length === 0 && <p className="subtle">No jobs match your search.</p>}
+            </>
+          )}
+        </div>
+      )}
+
+      {selectedRole && (
+        <div className="card" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ flex: 1 }}>
+            <strong>{selectedRole.title}</strong>
+            <span className="subtle"> {roleLabel(selectedRole).slice(selectedRole.title.length)}</span>
+          </div>
+          <Button small onClick={() => setSelectedId("")}>
+            See all jobs
+          </Button>
+        </div>
+      )}
 
 
-      {loadingForm && <div className="card"><p className="subtle">Loading the application form…</p></div>}
-      {formError && <div className="error-summary" role="alert">{formError}</div>}
+      {selectedRole && loadingForm && (
+        <div className="card"><p className="subtle">Loading the application form…</p></div>
+      )}
+      {selectedRole && formError && <div className="error-summary" role="alert">{formError}</div>}
 
-      {form && !loadingForm && (
+      {selectedRole && form && !loadingForm && (
         <form onSubmit={submit} className="card" noValidate>
           {error && <div className="error-summary" role="alert">{error}</div>}
 
@@ -306,6 +374,11 @@ export function PublicApplyPage(): ReactNode {
       )}
     </div>
   );
+}
+
+function prettyMeta(value: string): string {
+  const s = value.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function roleLabel(r: PublicRole): string {

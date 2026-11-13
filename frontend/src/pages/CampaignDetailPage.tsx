@@ -401,7 +401,11 @@ export function CampaignDetailPage(): ReactNode {
               Candidates appear here once the job is open and people apply. You can also add walk-in resumes below.
             </p>
           )}
-          <ApplicationsTab campaignId={id} />
+          <ApplicationsTab
+            campaignId={id}
+            acceptingApplications={acceptingApplications}
+            onGoToSetup={() => goToSetup()}
+          />
         </>
       )}
       {tab === "interviews" && <InterviewsTab campaignId={id} />}
@@ -1191,7 +1195,15 @@ function interviewStatus(state: string): { label: string; tone: "ok" | "warn" | 
   }
 }
 
-function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
+function ApplicationsTab({
+  campaignId,
+  acceptingApplications,
+  onGoToSetup,
+}: {
+  campaignId: string;
+  acceptingApplications: boolean;
+  onGoToSetup: () => void;
+}): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
   const { token, hasPermission, canAccessCampaign } = useAuth();
@@ -1258,7 +1270,12 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
 
   return (
     <>
-      <WalkInUploader campaignId={campaignId} canUpload={canScreen} />
+      <WalkInUploader
+        campaignId={campaignId}
+        canUpload={canScreen}
+        acceptingApplications={acceptingApplications}
+        onGoToSetup={onGoToSetup}
+      />
 
       <Card
         title="Applications"
@@ -1447,7 +1464,17 @@ function ApplicationFormModal({ app, onClose }: { app: Application; onClose: () 
 /* Drag-and-drop bulk resume uploader for walk-in drives. Uploads multiple PDF/DOCX files
    through the safe document pipeline; requires a consent attestation and screening.execute
    + campaign assignment (enforced server-side). */
-function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUpload: boolean }): ReactNode {
+function WalkInUploader({
+  campaignId,
+  canUpload,
+  acceptingApplications,
+  onGoToSetup,
+}: {
+  campaignId: string;
+  canUpload: boolean;
+  acceptingApplications: boolean;
+  onGoToSetup: () => void;
+}): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
   const { token } = useAuth();
@@ -1503,11 +1530,27 @@ function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUplo
       }
     >
       <p className="subtle" style={{ marginTop: 0 }}>
-        Collect many resumes at once at a walk-in drive. Each file is validated, scanned and
-        quarantined. This does not create candidate records or run screening — a candidate&rsquo;s
-        identity and consent are captured before their resume is processed further.
+        Add many resumes at once, for example at a walk-in drive. Each file is checked for safety,
+        then becomes an application and is screened against this job&rsquo;s criteria.
       </p>
-      {open && (
+      {open && !acceptingApplications && (
+        <div className="next-banner" role="status">
+          <div className="next-banner__text">
+            <div>
+              <strong>Open this job first.</strong>
+              <span className="subtle">
+                {" "}
+                Resumes can only be added once the job is open for applications. Finish the setup
+                steps, then come back here.
+              </span>
+            </div>
+          </div>
+          <Button variant="accent" small onClick={onGoToSetup}>
+            Go to setup
+          </Button>
+        </div>
+      )}
+      {open && acceptingApplications && (
         <>
           {error && <ErrorNote>{error}</ErrorNote>}
           <div
@@ -1586,8 +1629,10 @@ function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUplo
                     <tr key={`${r.filename}-${i}`}>
                       <td>{r.filename}</td>
                       <td>
-                        <Badge tone={r.accepted ? "ok" : "danger"}>
-                          {r.accepted ? "Created" : "Rejected"}
+                        {/* "Not added" (never "Rejected"): this is about the FILE, not a
+                            decision about the candidate. */}
+                        <Badge tone={r.accepted ? "ok" : "warn"}>
+                          {r.accepted ? "Added" : "Not added"}
                         </Badge>
                       </td>
                       <td>
@@ -1603,9 +1648,11 @@ function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUplo
                 </tbody>
               </table>
               <p className="subtle" style={{ marginTop: 8 }}>
-                Each resume became an application and was screened. Open a candidate&rsquo;s
-                <strong> Scorecard</strong> in the Applications table below to see the full
-                breakdown. Walk-in candidate names are placeholders — correct them during review.
+                <strong>Added</strong> resumes became applications and were screened: open a
+                candidate&rsquo;s <strong>Scorecard</strong> in the Applications table below for the
+                breakdown. Walk-in names are placeholders, so correct them during review.{" "}
+                <strong>Not added</strong> means the file itself could not be used (see Detail);
+                nothing was decided about the candidate. Fix the issue and upload it again.
               </p>
             </div>
           )}
