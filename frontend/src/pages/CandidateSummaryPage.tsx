@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
+import { getJourney } from "../api/automation";
 import { ApiError } from "../api/client";
 import {
   downloadResume,
@@ -14,7 +15,12 @@ import {
   type ScreeningRun,
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
+import { AiInterviewsPanel } from "../components/AiInterviewsPanel";
+import { DecisionSection, PanelInterviewSection } from "../components/CandidateSections";
+import { JourneyTracker } from "../components/JourneyTracker";
 import { useToast } from "../components/toast";
+import { nextStepFor, stageFor, stateLabel, type NextStep } from "../lib/candidateStage";
+import { ApplicationFormModal } from "./CampaignDetailPage";
 import {
   Badge,
   Button,
@@ -172,6 +178,19 @@ export function CandidateSummaryPage(): ReactNode {
     queryKey: ["extracted-fields", applicationId],
     queryFn: () => listExtractedFields(applicationId),
   });
+  const journey = useQuery({
+    queryKey: ["journey", applicationId],
+    queryFn: () => getJourney(applicationId),
+  });
+  const [showForm, setShowForm] = useState(false);
+  const { hash } = useLocation();
+
+  // Deep links like ".../candidates/<id>#decision" land on that section once it renders.
+  useEffect(() => {
+    if (!hash || !app.data) return;
+    const el = document.getElementById(hash.slice(1));
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [hash, app.data]);
 
   const run: ScreeningRun | null = runs.data?.[0] ?? null;
   const results = run?.results ?? [];
@@ -250,21 +269,61 @@ export function CandidateSummaryPage(): ReactNode {
     (answers["experience"] as string | undefined);
   const education = answers["education"] as string | undefined;
 
+  const stage = stageFor(app.data.state);
+  const next = nextStepFor(app.data.state, { hasRun: Boolean(run) });
+  const offerableForAi = AI_OFFERABLE.has(app.data.state);
+
   return (
     <div className="report-page">
+      <nav aria-label="Breadcrumb" className="crumbs">
+        <Link to="/campaigns">Campaigns</Link>
+        <span aria-hidden="true">›</span>
+        <Link to={`/campaigns/${id}`}>{campaign.data?.name ?? "Job"}</Link>
+        <span aria-hidden="true">›</span>
+        <Link to={`/campaigns/${id}`}>Candidates</Link>
+        <span aria-hidden="true">›</span>
+        <span aria-current="page">{name}</span>
+      </nav>
       <div className="page-head">
-        <div className="btn-row" style={{ marginBottom: 8 }}>
-          <Button variant="ghost" small onClick={() => navigate(`/campaigns/${id}/report`)}>
-            ← Back to report
-          </Button>
-          <Link className="btn btn--sm btn--ghost" to={`/campaigns/${id}`}>
-            Campaign
-          </Link>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <h1 style={{ margin: 0 }}>{name}</h1>
+          <Badge tone={stage.tone}>
+            Stage {stage.number} of 7 · {stage.label}
+          </Badge>
         </div>
-        <h1>{name}</h1>
-        <p>Candidate summary · supports human review — screening never auto-decides hiring.</p>
+        <p>
+          {campaign.data?.position_title ?? ""}
+          {stateLabel(app.data.state) !== stage.label ? ` · ${stateLabel(app.data.state)}` : ""} ·
+          Screening and AI only advise; people make every decision.
+        </p>
       </div>
 
+      <nav aria-label="Sections on this page" className="section-nav">
+        <a href="#next">Next step</a>
+        <a href="#score">Score &amp; evidence</a>
+        <a href="#interviews">Interviews</a>
+        <a href="#decision">Decision</a>
+        <a href="#application">Application &amp; contact</a>
+      </nav>
+
+      <section id="next" className="cand-section">
+        <Card title="Where they are and what happens next" description="Every step from applying to joining.">
+          <div className="next-banner" role="status" style={{ marginTop: 0 }}>
+            <div className="next-banner__text">
+              <div>
+                <span className="next-banner__label">Next</span>
+                <strong>{next.text}</strong>
+                {next.who !== "—" && <span className="subtle"> · Who: {next.who}</span>}
+              </div>
+            </div>
+            <NextAction next={next} />
+          </div>
+          {journey.isLoading && <Loading label="Loading journey…" />}
+          {journey.data && <JourneyTracker journey={journey.data} />}
+        </Card>
+      </section>
+
+      <section id="score" className="cand-section">
       {/* Scores + status */}
       <Card title="Overview" description="The score and the main points at a glance.">
         <div className="summary-head">
@@ -378,17 +437,47 @@ export function CandidateSummaryPage(): ReactNode {
         </Card>
       )}
 
+      </section>
+
+      <section id="interviews" className="cand-section">
+        <h2 className="cand-section__title">Interviews</h2>
+        <AiInterviewsPanel
+          campaignId={id}
+          applicationId={applicationId}
+          nameOf={() => name}
+          offerable={offerableForAi ? [{ id: applicationId, label: name }] : []}
+        />
+        <PanelInterviewSection
+          campaignId={id}
+          applicationId={applicationId}
+          state={app.data.state}
+          name={name}
+        />
+      </section>
+
+      <section id="decision" className="cand-section">
+        <DecisionSection campaignId={id} applicationId={applicationId} state={app.data.state} />
+      </section>
+
       {/* Contact + resume */}
+      <section id="application" className="cand-section">
       <div className="grid grid--2">
-        <Card title="Applied position & status" description="What they applied for and where they are now.">
+        <Card title="Application" description="What they applied for and what they submitted.">
           <dl className="kv">
             <dt>Position</dt>
             <dd>{campaign.data?.position_title ?? "—"}</dd>
-            <dt>Status</dt>
+            <dt>Stage</dt>
             <dd>
-              <Badge tone={toneFor(app.data.state)}>{prettify(app.data.state)}</Badge>
+              <Badge tone={stage.tone}>
+                {stage.number} · {stage.label}
+              </Badge>
             </dd>
           </dl>
+          <div className="btn-row" style={{ marginTop: 12 }}>
+            <Button variant="default" small onClick={() => setShowForm(true)}>
+              View application form
+            </Button>
+          </div>
         </Card>
         <Card
           title="Contact & resume"
@@ -413,6 +502,39 @@ export function CandidateSummaryPage(): ReactNode {
           {fields.isLoading && <Loading label="Loading resume fields…" />}
         </Card>
       </div>
+      </section>
+
+      {showForm && <ApplicationFormModal app={app.data} onClose={() => setShowForm(false)} />}
     </div>
   );
+}
+
+// States in which an AI voice interview can be offered (same list as before).
+const AI_OFFERABLE = new Set(["screened", "manual_review", "interview_recommended", "interview_scheduled"]);
+
+/* The button for the next step: a section of this page, another page, or nothing. */
+function NextAction({ next }: { next: NextStep }): ReactNode {
+  const t = next.target;
+  if (t.kind === "candidate") {
+    return (
+      <a className="btn btn--accent btn--sm" href={`#${t.section}`}>
+        {next.cta} →
+      </a>
+    );
+  }
+  if (t.kind === "page") {
+    return (
+      <Link className="btn btn--accent btn--sm" to={t.to}>
+        {next.cta} →
+      </Link>
+    );
+  }
+  if (t.kind === "screen") {
+    return (
+      <a className="btn btn--accent btn--sm" href="#score">
+        See screening →
+      </a>
+    );
+  }
+  return null;
 }

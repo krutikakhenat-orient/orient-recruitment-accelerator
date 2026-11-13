@@ -80,10 +80,13 @@ export function AiInterviewsPanel({
   campaignId,
   nameOf,
   offerable,
+  applicationId,
 }: {
   campaignId: string;
   nameOf: (applicationId: string) => string;
   offerable: OfferableApplication[];
+  /** When set (the candidate page), show only this candidate's AI interviews. */
+  applicationId?: string;
 }): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
@@ -148,7 +151,9 @@ export function AiInterviewsPanel({
     onError: fail("Could not revoke the interview."),
   });
 
-  const rows = sessions.data ?? [];
+  const rows = (sessions.data ?? []).filter(
+    (r) => !applicationId || r.application_id === applicationId,
+  );
   const attempts = attemptInfo(rows);
   // Mirrors the backend's LIVE_STATUSES: a revoked or expired session no longer blocks a new
   // offer for the same candidate (the server creates a fresh draft in that case).
@@ -166,7 +171,22 @@ export function AiInterviewsPanel({
       </p>
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      {canPlan && canOffer.length > 0 && (
+      {canPlan && applicationId && canOffer.length > 0 && (
+        <div className="btn-row" style={{ margin: "8px 0 12px" }}>
+          <Button
+            variant="primary"
+            disabled={offer.isPending}
+            onClick={() => {
+              setError(null);
+              offer.mutate(canOffer[0]!.id);
+            }}
+          >
+            {offer.isPending ? "Offering…" : "Offer an AI interview"}
+          </Button>
+          <span className="subtle">Then draft the questions and approve them to create the link.</span>
+        </div>
+      )}
+      {canPlan && !applicationId && canOffer.length > 0 && (
         <div className="btn-row" style={{ margin: "8px 0 12px", alignItems: "end" }}>
           <div className="field" style={{ margin: 0 }}>
             <label htmlFor="ai-offer">Offer an AI interview to</label>

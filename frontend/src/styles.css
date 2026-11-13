@@ -1012,3 +1012,24 @@ table.report td.num { text-align: right; font-variant-numeric: tabular-nums; whi
 .job-card__cta { margin-top: auto; font-weight: 600; font-size: 0.86rem; }
 .jobs-search { display: flex; gap: 8px; margin-bottom: 12px; }
 .jobs-search input { flex: 1; }
+
+/* ---------- Candidate pipeline: stage strip (campaign Candidates tab) ---------- */
+.stage-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; margin: 4px 0 14px; }
+.stage-tile { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.stage-tile:hover { border-color: var(--border-strong); }
+.stage-tile[aria-pressed="true"] { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.stage-tile__label { font-size: 0.78rem; color: var(--text-muted); font-weight: 600; }
+.stage-tile__count { font-size: 1.35rem; font-weight: 700; }
+.stage-tile--attention { background: #fff4e0; border-color: #e0b060; }
+.stage-tile--attention .stage-tile__label { color: #8a5300; }
+[data-theme="dark"] .stage-tile--attention { background: rgba(224, 176, 96, 0.12); }
+.cand-link { font-weight: 600; }
+
+/* ---------- Candidate page: breadcrumb, section links, sections ---------- */
+.crumbs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.86rem; color: var(--text-muted); margin-bottom: 6px; }
+.crumbs [aria-current="page"] { color: var(--text); font-weight: 600; }
+.section-nav { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; margin-bottom: 10px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.section-nav a { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); font-size: 0.84rem; color: var(--text); text-decoration: none; }
+.section-nav a:hover, .section-nav a:focus-visible { border-color: var(--primary); }
+.cand-section { scroll-margin-top: 56px; margin-bottom: 8px; }
+.cand-section__title { font-size: 1.1rem; margin: 18px 0 8px; }
