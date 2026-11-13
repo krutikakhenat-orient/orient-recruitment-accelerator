@@ -9,6 +9,7 @@ from app.db.base import Base
 from app.modules.ai_interviews import models as ai_interview_models  # noqa: F401
 from app.modules.applications import models as application_models  # noqa: F401
 from app.modules.assessments import models as assessment_models  # noqa: F401
+from app.modules.assistant import models as assistant_models  # noqa: F401
 from app.modules.audit import models as audit_models  # noqa: F401
 from app.modules.campaigns import models as campaign_models  # noqa: F401
 from app.modules.candidates import models as candidate_models  # noqa: F401
@@ -16,6 +17,7 @@ from app.modules.decisions import models as decision_models  # noqa: F401
 from app.modules.documents import models as document_models  # noqa: F401
 from app.modules.extraction import models as extraction_models  # noqa: F401
 from app.modules.forms import models as form_models  # noqa: F401
+from app.modules.hr_questions import models as hr_question_models  # noqa: F401
 from app.modules.identity import models as identity_models  # noqa: F401
 from app.modules.induction import models as induction_models  # noqa: F401
 from app.modules.interview_confirmations import (
@@ -23,6 +25,7 @@ from app.modules.interview_confirmations import (
 )
 from app.modules.interviews import models as interview_models  # noqa: F401
 from app.modules.job_descriptions import models as jd_models  # noqa: F401
+from app.modules.knowledge_base import models as knowledge_base_models  # noqa: F401
 from app.modules.notifications import models as notification_models  # noqa: F401
 from app.modules.onboarding import models as onboarding_models  # noqa: F401
 from app.modules.policies import models as policy_models  # noqa: F401

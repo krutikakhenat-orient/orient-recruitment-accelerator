@@ -303,9 +303,10 @@ export const TASKS: TaskGuide[] = [
   {
     title: "Publish a policy",
     steps: [
-      "Settings > Policies & guides > New policy or guide. Save the draft.",
-      "Click Approve to publish. Employees can read it and the assistant can use it.",
-      "To change it later click Revise, edit the new draft and approve it.",
+      "Settings > Policies & guides > Upload file (PDF, DOCX, TXT or MD) or Write a draft. Choose who it is for.",
+      "Click Approve to publish. The badge shows Indexing, then Ready for chatbot. If it shows Index failed, read the reason and click Reindex.",
+      "To change it later click Revise, edit or replace the file, and approve it. The old version keeps answering until the new one is ready.",
+      "The HR inbox tab lists questions people sent to HR. Answer them, or turn one into an FAQ draft.",
     ],
   },
   {
@@ -388,6 +389,6 @@ export const FAQ: { q: string; a: string }[] = [
   { q: "Why is a button greyed out?", a: "You may not have permission, or an earlier step is not done yet (for example, joining details must be approved before joining messages can be sent). The line under the button says why." },
   { q: "Where do I see what happened to a candidate?", a: "Click Journey next to their name. It shows every step, who handles it, and what happens next." },
   { q: "Can I change an approved policy or job description?", a: "Not in place. Use Revise to make a new version. The old version stays on record." },
-  { q: "Does the HR assistant use AI?", a: "No. It looks for matching words in approved policies and quotes them with the source. If nothing matches it says so." },
+  { q: "Does the HR assistant use AI?", a: "Only if your organisation turns on smart search. Then an AI model writes the answer from approved policy passages and must cite them; anything without a citation is not shown. Otherwise it matches words in approved policies and quotes them. Either way it names the source, says so when nothing matches, and never decides individual cases." },
   { q: "Who can see a candidate's phone or email?", a: "Only people with permission, after pressing Reveal. Every reveal is recorded." },
 ];

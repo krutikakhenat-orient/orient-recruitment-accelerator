@@ -56,9 +56,17 @@ announce to the team (only with the joiner's agreement) → **Mark as joined**.
 overdue / waiting for candidate. **Run reminder check** records one notice per application.
 An approver can change the target (default 48 hours, warning at 75%).
 
-**Publish a policy.** *Settings > Policies & guides*: write a draft, **Approve** to publish,
-**Revise** to make a new version. Employees read and acknowledge it; the HR assistant answers
-only from approved policies and names the source.
+**Publish a policy.** *Settings > Policies & guides*: **Upload file** (PDF, DOCX, TXT or MD;
+scanned images cannot be read) or **Write a draft**, and choose who it is for. **Approve** to
+publish; the badge shows **Indexing**, then **Ready for chatbot** (or **Index failed** with the
+reason and a **Reindex** button). **Revise** makes a new version; the old one keeps answering
+until the new one is ready. Employees read and acknowledge it.
+
+**Ask HR.** Everyone signed in can use *Ask HR* (or *Policies & guides* for employees). Answers
+come only from approved policies the person may see, with the policy, version and page. If
+nothing matches, **Send to HR** puts the question in the *HR inbox* tab, where HR answers it or
+turns it into an FAQ draft. Questions about someone's own records (leave balance, pay) are not
+answered here. The *Insights* tab shows counts only, never who asked.
 
 **Handle a privacy request.** *Settings > Privacy & retention > Privacy requests*: enter the
 email the person applied with, choose the request type, record it, and close it when done.
@@ -89,7 +97,7 @@ delivered), so the whole journey can be followed on one computer.
 | SLA hours | Calendar hours | Business-hours and holiday calendar |
 | Document verification | Rule-based checks on what HR types in | AI/OCR reading of files (placeholder) |
 | Feedback summary | Built from interviewers' own scores and notes | Optional AI summary (placeholder) |
-| HR assistant | Matches approved policy text and quotes it | Optional AI phrasing (placeholder); holiday calendar |
+| HR assistant | Matches approved policy text and quotes it, with citations; feedback, Send to HR, HR inbox | Smart search (off by default): Bedrock Knowledge Base + S3 Vectors, not yet provisioned (`ORA_HR_CHATBOT_*`); holiday calendar |
 | ZingHR | Preview of the record that would be sent | ZingHR API access and sandbox |
 | Naukri / NOCR | Not connected | Feasibility study, terms, consent |
 | AI avatar induction | Not built; recorded video is used | Vendor review and consent |

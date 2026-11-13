@@ -25,6 +25,13 @@ interface Answer {
 
 const ANSWERS: Answer[] = [
   {
+    keywords: /\b(annual leave|sick leave|leave policy|holidays?|travel|expenses?|reimburse\w*|dress code|working hours|hr polic(y|ies))\b/i,
+    reply:
+      "HR policy questions are answered on the Ask HR page, only from approved company policies, " +
+      "with the policy and version each answer comes from.",
+    chips: [{ label: "Open Ask HR", to: "/ask-hr" }],
+  },
+  {
     keywords: /(create|new).*(campaign|project)|start.*hir/i,
     reply:
       "To start hiring: 1) create a Project (the approved need), 2) create a Campaign under it, " +
@@ -114,6 +121,9 @@ const FALLBACK =
   "quick action below.";
 
 const STARTERS = [
+  // HR policy questions (leave, travel, ...) are answered on the Ask HR page from approved
+  // policies with citations; this panel only explains how the platform works.
+  { label: "Ask an HR policy question", to: "/ask-hr" },
   { label: "How do I create a campaign?", ask: "How do I create a campaign?" },
   { label: "How does screening work?", ask: "How does screening work?" },
   { label: "What is the review queue?", ask: "What is the review queue?" },

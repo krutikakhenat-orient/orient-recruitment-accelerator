@@ -15,11 +15,29 @@ const errorEnvelope = z.object({
 export class ApiError extends Error {
   code: string;
   correlationId: string | null;
-  constructor(code: string, message: string, correlationId: string | null) {
+  status: number | undefined;
+  details: unknown;
+  constructor(
+    code: string,
+    message: string,
+    correlationId: string | null,
+    extra: { status?: number; details?: unknown } = {},
+  ) {
     super(message);
     this.code = code;
     this.correlationId = correlationId;
+    this.status = extra.status;
+    this.details = extra.details;
   }
+}
+
+function toApiError(body: unknown, status: number): ApiError {
+  const parsed = errorEnvelope.safeParse(body);
+  if (parsed.success) {
+    return new ApiError(parsed.data.error.code, parsed.data.error.message,
+      parsed.data.error.correlation_id, { status, details: parsed.data.error.details });
+  }
+  return new ApiError("unknown_error", `Request failed (${status})`, null, { status });
 }
 
 let accessToken: string | null = null;
@@ -70,9 +88,11 @@ export async function clearServerSession(): Promise<void> {
 
 const AUTH_PATHS = ["/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout"];
 
+// The schema's INPUT is unknown JSON; T is its parsed OUTPUT (so `.default()` fields are
+// required in T).
 export async function apiFetch<T>(
   path: string,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   init: RequestInit = {},
   retried = false,
 ): Promise<T> {
@@ -90,17 +110,26 @@ export async function apiFetch<T>(
 
   const body: unknown = await resp.json().catch(() => null);
 
-  if (!resp.ok) {
-    const parsed = errorEnvelope.safeParse(body);
-    if (parsed.success) {
-      throw new ApiError(
-        parsed.data.error.code,
-        parsed.data.error.message,
-        parsed.data.error.correlation_id,
-      );
-    }
-    throw new ApiError("unknown_error", `Request failed (${resp.status})`, null);
-  }
+  if (!resp.ok) throw toApiError(body, resp.status);
 
+  return schema.parse(body);
+}
+
+/* Multipart upload (the browser sets the boundary, so no Content-Type here). Same token
+   refresh and error envelope handling as apiFetch. */
+export async function apiUpload<T>(
+  path: string,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  form: FormData,
+  retried = false,
+): Promise<T> {
+  const headers = new Headers();
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+  const resp = await fetch(path, { method: "POST", headers, body: form });
+  if (resp.status === 401 && !retried && accessToken) {
+    if (await refreshSession()) return apiUpload(path, schema, form, true);
+  }
+  const body: unknown = await resp.json().catch(() => null);
+  if (!resp.ok) throw toApiError(body, resp.status);
   return schema.parse(body);
 }

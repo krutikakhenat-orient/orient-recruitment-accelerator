@@ -11,6 +11,8 @@ import { ConfirmInterviewPage } from "../pages/ConfirmInterviewPage";
 import { GuidePage } from "../pages/GuidePage";
 import { IntegrationsPage } from "../pages/IntegrationsPage";
 import { OnboardingPage } from "../pages/OnboardingPage";
+import { HrChatLauncher } from "../components/hr-chat/HrChatLauncher";
+import { AskHrPage } from "../pages/AskHrPage";
 import { PoliciesPage } from "../pages/PoliciesPage";
 import { SlaPage } from "../pages/SlaPage";
 import { WaitlistPage } from "../pages/WaitlistPage";
@@ -46,9 +48,10 @@ function RequireAuth({ children }: { children: ReactNode }): ReactNode {
   return children;
 }
 
-/* Minimal shell for the employee induction experience: a lightweight header (product name +
+/* Minimal shell for the employee experience: a lightweight header (product name, Ask HR,
    Sign out) and nothing from the staff portal — no AppLayout sidebar, no staff routes, no
-   OrientAssistant. An employee only ever sees the EmployeePage. */
+   OrientAssistant (staff workflow help). An employee sees the EmployeePage, and the HR policy
+   chatbot from the header link, /ask-hr, or the floating Ask HR button. */
 function EmployeeShell(): ReactNode {
   const { signOut } = useAuth();
   return (
@@ -62,6 +65,9 @@ function EmployeeShell(): ReactNode {
           <div className="topbar__title">Orient Recruitment Accelerator</div>
         </div>
         <div className="topbar__spacer" />
+        <Link className="btn btn--sm btn--primary" to="/ask-hr">
+          Ask HR
+        </Link>
         <Link className="btn btn--sm btn--ghost" to="/guide">
           User guide
         </Link>
@@ -72,9 +78,11 @@ function EmployeeShell(): ReactNode {
       <main id="main" className="content">
         <Routes>
           <Route path="/" element={<EmployeePage />} />
+          <Route path="/ask-hr" element={<EmployeePage key="ask" initialTab="ask" />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      <HrChatLauncher />
     </div>
   );
 }
@@ -134,6 +142,7 @@ export function App(): ReactNode {
                     <Route path="/offers" element={<OnboardingPage />} />
                     <Route path="/waitlist" element={<WaitlistPage />} />
                     <Route path="/policies" element={<PoliciesPage />} />
+                    <Route path="/ask-hr" element={<AskHrPage />} />
                     <Route path="/integrations" element={<IntegrationsPage />} />
                     <Route path="/audit" element={<AuditPage />} />
                     <Route path="/settings" element={<SettingsPage />} />

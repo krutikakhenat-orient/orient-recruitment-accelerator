@@ -1,22 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import {
   acknowledgePolicy,
   approvePolicy,
-  askAssistant,
   createPolicy,
+  downloadPolicyOriginal,
+  faqFromUnanswered,
+  getIndexStatus,
+  getOriginalLink,
   listPolicies,
   listUnanswered,
+  reindexPolicy,
   retirePolicy,
   revisePolicy,
   updatePolicy,
-  type AskResponse,
   type Policy,
+  type PolicyKind,
 } from "../api/automation";
 import { ApiError } from "../api/client";
 import { useAuth } from "../app/auth-context";
+import { AssistantInsightsPanel } from "../components/hr-chat/AssistantInsightsPanel";
+import { AudiencePicker, audienceLabel } from "../components/hr-chat/AudiencePicker";
+import { ChatPanel } from "../components/hr-chat/ChatPanel";
+import { HrInbox } from "../components/hr-chat/HrInbox";
+import { IndexBadge } from "../components/hr-chat/IndexBadge";
+import { MyHrQuestions } from "../components/hr-chat/MyHrQuestions";
+import { UploadPolicyDialog } from "../components/hr-chat/UploadPolicyDialog";
 import { useToast } from "../components/toast";
 import {
   Banner,
@@ -33,56 +44,20 @@ import {
   prettify,
 } from "../components/ui";
 
-/* The HR assistant: asks a question, answers only from approved policies, names its source
-   and says so plainly when nothing covers the question. No AI model is involved. */
+const KIND_LABEL: Record<string, string> = { policy: "Policy", sop: "Guide / SOP", faq: "FAQ" };
+
+/* The HR assistant for employees: cited answers from approved policies, plus the replies to
+   questions they sent to HR. Used on the employee dashboard and the policies page. */
 export function AssistantBox(): ReactNode {
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<AskResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const ask = useMutation({
-    mutationFn: () => askAssistant(question.trim()),
-    onSuccess: (r) => {
-      setError(null);
-      setAnswer(r);
-    },
-    onError: (e) => setError(e instanceof ApiError ? e.message : "Could not ask the question."),
-  });
   return (
-    <Card
-      title="Ask HR"
-      description="Ask about leave, working hours and other policies. Answers come only from approved HR policies."
-    >
-      {error && <ErrorNote>{error}</ErrorNote>}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (question.trim().length >= 2) ask.mutate();
-        }}
-      >
-        <Field label="Your question" htmlFor="ask-q" hint="For example: how many days of annual leave do I get?">
-          <input id="ask-q" value={question} onChange={(e) => setQuestion(e.target.value)} />
-        </Field>
-        <Button type="submit" variant="primary" small disabled={ask.isPending || question.trim().length < 2}>
-          {ask.isPending ? "Looking…" : "Ask"}
-        </Button>
-      </form>
-      {answer && (
-        <div className={`assistant-answer ${answer.answered ? "" : "assistant-answer--none"}`} role="status">
-          <p style={{ margin: 0 }}>{answer.answer}</p>
-          {answer.sources.map((s) => (
-            <p key={s.policy_id} className="doc-row__meta" style={{ margin: "6px 0 0" }}>
-              Source: {s.title} (version {s.version})
-            </p>
-          ))}
-          {answer.route_to_hr && (
-            <p className="doc-row__meta" style={{ margin: "6px 0 0" }}>
-              Please check with HR directly.
-            </p>
-          )}
-          <p className="doc-row__meta" style={{ margin: "6px 0 0" }}>{answer.note}</p>
-        </div>
-      )}
-    </Card>
+    <>
+      <Card title="Ask HR" description="Ask about leave, working hours and other policies.">
+        <ChatPanel />
+      </Card>
+      <Card title="My questions to HR" description="Questions you sent to HR and their replies.">
+        <MyHrQuestions />
+      </Card>
+    </>
   );
 }
 
@@ -113,7 +88,7 @@ function PolicyReader({ policy, onClose }: { policy: Policy; onClose: () => void
       }
     >
       <p className="doc-row__meta">
-        {prettify(policy.kind)} · version {policy.version}
+        {KIND_LABEL[policy.kind] ?? prettify(policy.kind)} · version {policy.version}
         {policy.department ? ` · ${policy.department}` : ""}
       </p>
       <p style={{ whiteSpace: "pre-wrap" }}>{policy.body}</p>
@@ -132,6 +107,7 @@ export function PolicyLibrary(): ReactNode {
       description="Read each one and confirm that you have read it. Anything revised later will ask you again."
     >
       {policies.isLoading && <Loading />}
+      {policies.isError && <ErrorNote>The policies could not be loaded. Please try again.</ErrorNote>}
       {policies.data && approved.length === 0 && <Empty>No policies have been published yet.</Empty>}
       {approved.map((p) => (
         <div key={p.id} className="doc-row">
@@ -141,7 +117,7 @@ export function PolicyLibrary(): ReactNode {
               <StatusBadge status={p.acknowledged ? "done" : "requested"} label={p.acknowledged ? "Read" : "To read"} />
             </div>
             <div className="doc-row__meta">
-              {prettify(p.kind)} · version {p.version}
+              {KIND_LABEL[p.kind] ?? prettify(p.kind)} · version {p.version}
               {p.department ? ` · ${p.department}` : ""}
             </div>
           </div>
@@ -164,22 +140,35 @@ function PolicyForm({
   onClose: () => void;
   onDone: () => void;
 }): ReactNode {
+  const base = useId();
+  const uploaded = !!existing?.source_filename;
   const [title, setTitle] = useState(existing?.title ?? "");
-  const [kind, setKind] = useState<"policy" | "sop">((existing?.kind as "policy" | "sop") ?? "policy");
+  const [kind, setKind] = useState<PolicyKind>((existing?.kind as PolicyKind) ?? "policy");
   const [department, setDepartment] = useState(existing?.department ?? "");
   const [body, setBody] = useState(existing?.body ?? "");
+  const [audience, setAudience] = useState<string[]>(
+    (existing?.audience ?? []).filter((t) => t !== "everyone"),
+  );
+  const [reviewDue, setReviewDue] = useState(existing?.review_due_date ?? "");
   const [error, setError] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: () =>
       existing
-        ? updatePolicy(existing.id, { title, body, department })
-        : createPolicy({ title, kind, body, ...(department.trim() ? { department: department.trim() } : {}) }),
+        ? updatePolicy(existing.id, {
+            title, department, audience, review_due_date: reviewDue || null,
+            ...(uploaded ? {} : { body }),
+          })
+        : createPolicy({
+            title, kind, body, audience,
+            ...(department.trim() ? { department: department.trim() } : {}),
+            ...(reviewDue ? { review_due_date: reviewDue } : {}),
+          }),
     onSuccess: onDone,
     onError: (e) => setError(e instanceof ApiError ? e.message : "Could not save."),
   });
   return (
     <Modal
-      title={existing ? "Edit draft" : "New policy or guide"}
+      title={existing ? "Edit draft" : "Write a policy, guide or FAQ"}
       onClose={onClose}
       footer={
         <>
@@ -190,33 +179,75 @@ function PolicyForm({
         </>
       }
     >
-      <p className="hint-line">A draft is not visible to employees and is not used by the assistant until you approve it.</p>
+      <p className="hint-line">A draft is not visible to employees and is not used by the chatbot until you approve it.</p>
       {error && <ErrorNote>{error}</ErrorNote>}
-      <Field label="Title" htmlFor="pol-title">
-        <input id="pol-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+      <Field label="Title" htmlFor={`${base}-title`}>
+        <input id={`${base}-title`} value={title} onChange={(e) => setTitle(e.target.value)} />
       </Field>
       {!existing && (
-        <Field label="Type" htmlFor="pol-kind" hint="A policy is a company rule. A guide (SOP) is a how-to for one team.">
-          <select id="pol-kind" value={kind} onChange={(e) => setKind(e.target.value as "policy" | "sop")}>
+        <Field label="Type" htmlFor={`${base}-kind`} hint="A policy is a company rule. A guide (SOP) is a how-to for one team. An FAQ is a short question and answer.">
+          <select id={`${base}-kind`} value={kind} onChange={(e) => setKind(e.target.value as PolicyKind)}>
             <option value="policy">Policy</option>
             <option value="sop">Guide / SOP</option>
+            <option value="faq">FAQ</option>
           </select>
         </Field>
       )}
-      <Field label="Department (optional)" htmlFor="pol-dept" hint="Leave empty if it applies to everyone.">
-        <input id="pol-dept" value={department} onChange={(e) => setDepartment(e.target.value)} />
+      <Field label="Department (optional)" htmlFor={`${base}-dept`} hint="Shown as a label only.">
+        <input id={`${base}-dept`} value={department} onChange={(e) => setDepartment(e.target.value)} />
       </Field>
-      <Field label="Text" htmlFor="pol-body">
-        <textarea id="pol-body" rows={8} value={body} onChange={(e) => setBody(e.target.value)} />
+      <AudiencePicker value={audience} onChange={setAudience} />
+      <Field label="Review by (optional)" htmlFor={`${base}-review`}>
+        <input id={`${base}-review`} type="date" value={reviewDue} onChange={(e) => setReviewDue(e.target.value)} />
+      </Field>
+      <Field
+        label="Text"
+        htmlFor={`${base}-body`}
+        hint={uploaded ? "This text was read from the uploaded file. Use Replace file to change it." : undefined}
+      >
+        <textarea id={`${base}-body`} rows={8} value={body} readOnly={uploaded}
+          onChange={(e) => setBody(e.target.value)} />
       </Field>
     </Modal>
   );
+}
+
+/* While a version is Indexing, check its status every 10 seconds and refresh the list once
+   it settles. */
+function IndexWatcher({ policyId }: { policyId: string }): null {
+  const qc = useQueryClient();
+  const status = useQuery({
+    queryKey: ["index-status", policyId],
+    queryFn: () => getIndexStatus(policyId),
+    refetchInterval: 10_000,
+  });
+  const settled = status.data && status.data.index_status !== "indexing";
+  useEffect(() => {
+    if (settled) void qc.invalidateQueries({ queryKey: ["policies"] });
+  }, [settled, qc]);
+  return null;
+}
+
+async function openOriginal(policyId: string): Promise<void> {
+  const link = await getOriginalLink(policyId);
+  if (link.url) {
+    window.open(link.url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  const { blob, filename } = await downloadPolicyOriginal(policyId);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function ManageLibrary(): ReactNode {
   const qc = useQueryClient();
   const toast = useToast();
   const [form, setForm] = useState<{ existing?: Policy } | null>(null);
+  const [upload, setUpload] = useState<{ replacing?: Policy } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const policies = useQuery({ queryKey: ["policies"], queryFn: listPolicies });
   const unanswered = useQuery({ queryKey: ["unanswered"], queryFn: listUnanswered });
@@ -224,51 +255,71 @@ function ManageLibrary(): ReactNode {
     void qc.invalidateQueries({ queryKey: ["policies"] });
   };
   const act = useMutation({
-    mutationFn: (run: () => Promise<Policy>) => run(),
+    mutationFn: (run: () => Promise<unknown>) => run(),
     onSuccess: () => {
       setError(null);
       refresh();
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : "Could not do that."),
+    onError: (e) => setError(e instanceof Error ? e.message : "Could not do that."),
   });
   return (
     <>
       <Banner>
-        <strong>How the library works:</strong> write a draft, approve it to publish it, and use
-        "Revise" to make a new version. Approved text is never edited in place, so what people
-        acknowledged stays on record.
+        <strong>How the library works:</strong> upload a file or write a draft, then approve it
+        to publish it. Approved versions are sent to the chatbot's index; the badge shows when the
+        chatbot can use them. Use "Revise" for a new version: the old one keeps answering
+        questions until the new one is ready.
       </Banner>
       {error && <ErrorNote>{error}</ErrorNote>}
       <Card
         title="Library"
-        description="Every policy and guide, including drafts and older versions."
+        description="Every policy, guide and FAQ, including drafts and older versions."
         actions={
-          <Button variant="primary" small onClick={() => setForm({})}>
-            New policy or guide
-          </Button>
+          <div className="btn-row">
+            <Button variant="primary" small onClick={() => setUpload({})}>Upload file</Button>
+            <Button small onClick={() => setForm({})}>Write a draft</Button>
+          </div>
         }
       >
         {policies.isLoading && <Loading />}
+        {policies.isError && <ErrorNote>The library could not be loaded. Please try again.</ErrorNote>}
         {policies.data && policies.data.length === 0 && <Empty>Nothing here yet. Add the first policy.</Empty>}
         {policies.data?.map((p) => (
           <div key={p.id} className="doc-row">
             <div>
               <div className="doc-row__name">
-                {p.title} <StatusBadge status={p.status} />
+                {p.title} <StatusBadge status={p.status} />{" "}
+                {p.status !== "draft" && <IndexBadge status={p.index_status} />}
               </div>
               <div className="doc-row__meta">
-                {prettify(p.kind)} · version {p.version}
-                {p.department ? ` · ${p.department}` : ""}
+                {KIND_LABEL[p.kind] ?? prettify(p.kind)} · version {p.version} · for {audienceLabel(p.audience)}
+                {p.source_filename ? ` · file: ${p.source_filename}` : ""}
                 {p.status === "approved" ? ` · read by ${p.acknowledgement_count}` : ""}
+                {p.review_due_date ? ` · review by ${new Date(p.review_due_date).toLocaleDateString()}` : ""}
               </div>
+              {p.index_status === "failed" && p.index_error && (
+                <p className="field-error" style={{ margin: "4px 0 0" }}>Index failed: {p.index_error}</p>
+              )}
+              {p.index_status === "indexing" && <IndexWatcher policyId={p.id} />}
             </div>
             <div className="btn-row">
+              {p.has_file && (
+                <Button small variant="ghost" title="Download the stored file"
+                  onClick={() => act.mutate(() => openOriginal(p.id))}>
+                  Open original
+                </Button>
+              )}
               {p.status === "draft" && (
                 <>
-                  <Button small title="Change the wording of this draft" onClick={() => setForm({ existing: p })}>
+                  <Button small title="Change the details of this draft" onClick={() => setForm({ existing: p })}>
                     Edit
                   </Button>
-                  <Button small variant="primary" title="Publish it. Employees and the assistant can then use it"
+                  {p.source_filename && (
+                    <Button small title="Upload a new file for this draft" onClick={() => setUpload({ replacing: p })}>
+                      Replace file
+                    </Button>
+                  )}
+                  <Button small variant="primary" title="Publish it and send it to the chatbot's index"
                     onClick={() => act.mutate(() => approvePolicy(p.id))}>
                     Approve
                   </Button>
@@ -276,12 +327,22 @@ function ManageLibrary(): ReactNode {
               )}
               {p.status === "approved" && (
                 <>
+                  {(p.index_status === "failed" || p.index_status === "not_indexed") && (
+                    <Button small variant="primary" title="Try indexing this version again"
+                      onClick={() => act.mutate(() => reindexPolicy(p.id))}>
+                      Reindex
+                    </Button>
+                  )}
                   <Button small title="Start a new version as a draft"
                     onClick={() => act.mutate(() => revisePolicy(p.id))}>
                     Revise
                   </Button>
-                  <Button small variant="ghost" title="Stop using this policy"
-                    onClick={() => act.mutate(() => retirePolicy(p.id))}>
+                  <Button small variant="ghost" title="Stop using this policy and remove it from the chatbot"
+                    onClick={() => {
+                      if (window.confirm(`Retire "${p.title}"? Employees will no longer see it and the chatbot will stop using it.`)) {
+                        act.mutate(() => retirePolicy(p.id));
+                      }
+                    }}>
                     Retire
                   </Button>
                 </>
@@ -292,13 +353,24 @@ function ManageLibrary(): ReactNode {
       </Card>
       <Card
         title="Questions nobody could answer"
-        description="What people asked the HR assistant that no approved policy covered. Use this to decide what to write next."
+        description="What people asked that no approved policy covered. Turn one into an FAQ draft."
       >
+        {unanswered.isLoading && <Loading />}
         {unanswered.data && unanswered.data.length === 0 && <Empty>No open questions.</Empty>}
         {unanswered.data?.map((q, i) => (
-          <p key={i} style={{ margin: "4px 0" }}>
-            {q.question} <span className="doc-row__meta">{new Date(q.asked_at).toLocaleDateString()}</span>
-          </p>
+          <div key={q.id ?? i} className="doc-row">
+            <div>
+              {q.question} <span className="doc-row__meta">{new Date(q.asked_at).toLocaleDateString()}</span>
+            </div>
+            {q.id && (
+              <Button small onClick={() => act.mutate(async () => {
+                await faqFromUnanswered(q.id as string);
+                toast.push("FAQ draft created", { tone: "ok" });
+              })}>
+                Create FAQ draft
+              </Button>
+            )}
+          </div>
         ))}
       </Card>
       {form && (
@@ -309,6 +381,17 @@ function ManageLibrary(): ReactNode {
             setForm(null);
             refresh();
             toast.push("Draft saved", { tone: "ok" });
+          }}
+        />
+      )}
+      {upload && (
+        <UploadPolicyDialog
+          {...(upload.replacing ? { replacing: upload.replacing } : {})}
+          onClose={() => setUpload(null)}
+          onDone={() => {
+            setUpload(null);
+            refresh();
+            toast.push("File checked and saved as a draft", { tone: "ok" });
           }}
         />
       )}
@@ -325,7 +408,7 @@ export function PoliciesPage(): ReactNode {
       <Link to="/settings" className="back-link">← Settings</Link>
       <PageHeader
         title="Policies & guides"
-        description="The company's HR policies and team guides. Employees read them here and the HR assistant answers from them."
+        description="The company's HR policies and team guides. Employees read them here and the HR chatbot answers from them."
       />
       {manage ? (
         <>
@@ -335,11 +418,15 @@ export function PoliciesPage(): ReactNode {
             onChange={setTab}
             tabs={[
               { id: "manage", label: "Manage library" },
+              { id: "inbox", label: "HR inbox" },
+              { id: "insights", label: "Insights" },
               { id: "read", label: "How employees see it" },
-              { id: "ask", label: "Try the assistant" },
+              { id: "ask", label: "Try the chatbot" },
             ]}
           />
           {tab === "manage" && <ManageLibrary />}
+          {tab === "inbox" && <HrInbox />}
+          {tab === "insights" && <AssistantInsightsPanel />}
           {tab === "read" && <PolicyLibrary />}
           {tab === "ask" && <AssistantBox />}
         </>
