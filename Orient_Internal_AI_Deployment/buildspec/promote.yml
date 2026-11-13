@@ -1,0 +1,20 @@
+# Promote: after the production backend is live, fast-forward CodeCommit `main` to the exact
+# commit that passed UAT. Amplify's production app builds `main`, so the production frontend gets
+# the same commit as the backend. Never force-pushes: if `main` has moved separately (e.g. a
+# hotfix), the push is rejected and the release stops for a human to reconcile the branches.
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  build:
+    commands:
+      - cd "$CODEBUILD_SRC_DIR"
+      - COMMIT="$(git rev-parse HEAD)"
+      - echo "Promoting ${COMMIT} to main"
+      - git config --global credential.helper '!aws codecommit credential-helper $@'
+      - git config --global credential.UseHttpPath true
+      - REMOTE="https://git-codecommit.${AWS_REGION}.amazonaws.com/v1/repos/${REPO_NAME}"
+      - git push "$REMOTE" "${COMMIT}:refs/heads/main"
+      - echo "main is now at ${COMMIT}; Amplify builds the production frontend from it."

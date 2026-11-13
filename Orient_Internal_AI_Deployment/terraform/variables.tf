@@ -61,6 +61,29 @@ variable "api_burst_limit" {
   default = 100
 }
 
+variable "create_codecommit_repo" {
+  description = "true only for the environment that owns the shared repository (production)."
+  type        = bool
+  default     = true
+}
+
+variable "amplify_branch" {
+  description = "Git branch the Amplify app builds: main (production) or develop (UAT)."
+  type        = string
+  default     = "main"
+}
+
+variable "amplify_stage" {
+  type    = string
+  default = "PRODUCTION"
+}
+
+variable "amplify_extra_env" {
+  description = "Extra Amplify build environment variables (e.g. ORA_ENVIRONMENT=uat for cost tags)."
+  type        = map(string)
+  default     = {}
+}
+
 variable "codecommit_repo_name" {
   type    = string
   default = "orient-recruitment-accelerator"

@@ -93,3 +93,51 @@ def test_snapshot_id_is_a_valid_rds_identifier() -> None:
     sid = rl.snapshot_id("fd4c3e5a", dt.datetime(2026, 11, 9, 14, 5, tzinfo=dt.UTC))
     assert sid == "ora-pre-fd4c3e5a-202611091405"
     assert sid[0].isalpha() and "--" not in sid and len(sid) <= 255
+
+
+# ---------------------------------------------------------------- UAT -> production promotion
+def test_release_targets_parse_in_order(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv(
+        "RELEASE_TARGETS", "uat=/ora-uat/release/last-commit;prod=/ora-staging/release/last-commit"
+    )
+    assert bp.release_targets() == [
+        ("uat", "/ora-uat/release/last-commit"),
+        ("prod", "/ora-staging/release/last-commit"),
+    ]
+
+
+def test_release_targets_fall_back_to_single_prod(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("RELEASE_TARGETS", raising=False)
+    monkeypatch.setenv("RELEASE_PARAM", "/ora-staging/release/last-commit")
+    assert bp.release_targets() == [("prod", "/ora-staging/release/last-commit")]
+
+
+def test_per_target_override_of_last_released(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("LAST_RELEASED", raising=False)
+    monkeypatch.setenv("LAST_RELEASED_UAT", "abc123")
+    assert bp.last_released_commit("uat", "/x") == "abc123"
+    assert bp.last_released_commit("prod", "") == "none"
+
+
+def test_target_view_uses_that_environments_decision() -> None:
+    release = {
+        "commit": "c1",
+        "backend_changed": True,
+        "has_migrations": True,
+        "zip_sha256_b64": "hash",
+        "targets": {
+            "uat": {"backend_changed": False, "has_migrations": False},
+            "prod": {"backend_changed": True, "has_migrations": True},
+        },
+    }
+    uat = rl.target_view(release, "uat")
+    assert uat["backend_changed"] is False and uat["has_migrations"] is False
+    assert uat["zip_sha256_b64"] == "hash"  # same package for every environment
+    prod = rl.target_view(release, "prod")
+    assert prod["backend_changed"] is True and prod["has_migrations"] is True
+
+
+def test_target_view_without_targets_is_unchanged() -> None:
+    release = {"backend_changed": True}
+    assert rl.target_view(release, "prod") == release
+    assert rl.target_view(release, "") == release

@@ -15,7 +15,8 @@ Migrations must keep version N-1 working (expand/contract, see docs/backend-cicd
 after step 4 the old code may keep serving, and a rollback in step 8 only moves the alias.
 
 Environment: API_FUNCTION, OPS_FUNCTION, API_ALIAS, APP_ARTIFACT_BUCKET, DB_CLUSTER_ID, API_URL,
-RELEASE_PARAM, SNAPSHOT_TAGS (JSON list of {Key, Value}).
+RELEASE_PARAM, SNAPSHOT_TAGS (JSON list of {Key, Value}), RELEASE_TARGET (uat / prod: selects
+that environment's decision from release.json; the same lambda.zip is used for every environment).
 """
 
 from __future__ import annotations
@@ -106,6 +107,19 @@ def smoke_ok(api_url: str) -> bool:
     return False
 
 
+def target_view(release: dict[str, Any], target: str) -> dict[str, Any]:
+    """The release decision for one environment (uat / prod), from Build's per-target section.
+
+    The package (lambda.zip and its hash) is the same for every environment: build once, promote.
+    """
+    per_target = release.get("targets", {})
+    if not target or target not in per_target:
+        return release
+    view = dict(release)
+    view.update(per_target[target])
+    return view
+
+
 class Releaser:
     def __init__(self) -> None:
         import boto3
@@ -166,6 +180,8 @@ class Releaser:
         log(f"snapshot {sid} available")
 
     def run(self, release: dict[str, Any]) -> int:
+        release = target_view(release, os.environ.get("RELEASE_TARGET", ""))
+        log(f"target environment: {os.environ.get('RELEASE_TARGET') or '(single)'}")
         if not release.get("backend_changed"):
             log("no backend change in this commit; nothing to release")
             return 0

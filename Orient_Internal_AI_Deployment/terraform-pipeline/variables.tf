@@ -31,9 +31,16 @@ variable "app_state_key" {
   default     = "hr-accelerator/staging/terraform.tfstate"
 }
 
+variable "uat_state_key" {
+  description = "State key of the UAT app stack."
+  type        = string
+  default     = "hr-accelerator/uat/terraform.tfstate"
+}
+
 variable "branch" {
-  type    = string
-  default = "main"
+  description = "Branch that starts a release: develop -> UAT -> (approval) -> production."
+  type        = string
+  default     = "develop"
 }
 
 variable "approver_emails" {

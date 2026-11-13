@@ -183,6 +183,12 @@ resource "aws_s3_object" "lambda" {
   key         = "bootstrap/${data.archive_file.bootstrap.output_md5}.zip"
   source      = data.archive_file.bootstrap.output_path
   source_hash = data.archive_file.bootstrap.output_md5
+
+  # Only used once, to create the functions. Line endings differ between checkouts, which would
+  # otherwise re-upload the placeholder on every plan.
+  lifecycle {
+    ignore_changes = [key, source, source_hash]
+  }
 }
 
 # ---------------------------------------------------------------- Lambda (no VPC)
@@ -333,7 +339,8 @@ resource "aws_lambda_alias" "api_live" {
   function_version = "$LATEST"
 
   lifecycle {
-    ignore_changes = [function_version]
+    # The release pipeline moves the alias and writes "commit <sha>" into the description.
+    ignore_changes = [function_version, description]
   }
 }
 
@@ -468,7 +475,7 @@ resource "aws_iam_role_policy" "amplify_codecommit" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["codecommit:GitPull", "codecommit:GetBranch", "codecommit:GetRepository"]
-      Resource = aws_codecommit_repository.app.arn
+      Resource = local.repo_arn
     }]
   })
 }
@@ -476,13 +483,13 @@ resource "aws_iam_role_policy" "amplify_codecommit" {
 resource "aws_amplify_app" "web" {
   name                 = "${local.prefix}-web"
   platform             = "WEB"
-  repository           = aws_codecommit_repository.app.clone_url_http
+  repository           = local.repo_clone_url_http
   iam_service_role_arn = aws_iam_role.amplify_service.arn
 
-  environment_variables = {
+  environment_variables = merge(var.amplify_extra_env, {
     AMPLIFY_MONOREPO_APP_ROOT = "frontend"
     AMPLIFY_DIFF_DEPLOY       = "false"
-  }
+  })
 
   custom_rule {
     source = "/api/<*>"
@@ -496,9 +503,11 @@ resource "aws_amplify_app" "web" {
   }
 }
 
+# Production builds `main`; UAT builds `develop` (var.amplify_branch). The resource keeps the name
+# "main" so the existing production state is unchanged.
 resource "aws_amplify_branch" "main" {
   app_id            = aws_amplify_app.web.id
-  branch_name       = "main"
-  stage             = "PRODUCTION"
+  branch_name       = var.amplify_branch
+  stage             = var.amplify_stage
   enable_auto_build = true
 }

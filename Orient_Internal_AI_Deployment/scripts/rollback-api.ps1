@@ -3,17 +3,20 @@
 #   .\rollback-api.ps1              list versions and roll back to the one before the current
 #   .\rollback-api.ps1 -Version 7   roll back (or forward) to version 7
 #   .\rollback-api.ps1 -List        only list versions
+#   .\rollback-api.ps1 -Env uat     same for UAT (default: prod)
 param(
     [string]$Version = "",
     [switch]$List,
+    [ValidateSet("prod", "uat")][string]$Env = "prod",
     [string]$Profile = "Orient_Internal_AI",
     [string]$Region = "ap-south-1",
-    [string]$Function = "ora-staging-api",
-    [string]$Alias = "live",
-    [string]$ApiUrl = "https://2psjcbnlvk.execute-api.ap-south-1.amazonaws.com"
+    [string]$Alias = "live"
 )
 $ErrorActionPreference = "Continue"
 $env:AWS_PROFILE = $Profile
+$Function = @{ prod = "ora-staging-api"; uat = "ora-uat-api" }[$Env]
+$ApiUrl = aws apigatewayv2 get-apis --region $Region --query "Items[?Name=='$($Function -replace '-api$','-http')'].ApiEndpoint | [0]" --output text
+Write-Host "[$Env] function $Function, API $ApiUrl"
 
 $current = aws lambda get-alias --function-name $Function --name $Alias --region $Region --query FunctionVersion --output text
 if ($LASTEXITCODE) { throw "Could not read alias $Alias (aws sso login --profile $Profile ?)" }

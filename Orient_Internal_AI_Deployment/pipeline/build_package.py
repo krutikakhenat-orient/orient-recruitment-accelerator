@@ -8,8 +8,10 @@
 3. Writes dist/ (the pipeline artifact: lambda.zip, release.json, release.py, deploy.yml) and
    release.env (the exported pipeline variables used by the Approve/Deploy stage conditions).
 
-Environment: RELEASE_PARAM, PIP_AUDIT_ENFORCE ("true"/"false"), FORCE_RELEASE ("true"/"false"),
-LAST_RELEASED (optional override of the SSM lookup, for local runs).
+Environment: RELEASE_TARGETS ("uat=<ssm param>;prod=<ssm param>", compared separately so each
+environment gets its own decision; RELEASE_PARAM is the older single-target form),
+PIP_AUDIT_ENFORCE ("true"/"false"), FORCE_RELEASE ("true"/"false"),
+LAST_RELEASED / LAST_RELEASED_<TARGET> (optional overrides of the SSM lookup, for local runs).
 """
 
 from __future__ import annotations
@@ -72,7 +74,7 @@ def summary_line(cs: ChangeSet, force: bool, vuln_count: int | None, enforce: bo
     elif force:
         what = "forced release (no code change; publishes current configuration)"
     else:
-        what = "no backend change (Approve and Deploy are skipped)"
+        what = "no backend change (deploy skipped)"
     names = ", ".join(Path(p).name for p in cs.new_migrations) or "none"
     parts = [what, f"new migrations: {names}"]
     if vuln_count is not None:
@@ -91,11 +93,29 @@ def run(
     return subprocess.run(args, cwd=cwd, check=check, capture_output=True, text=True)  # noqa: S603
 
 
-def last_released_commit() -> str:
-    override = os.environ.get("LAST_RELEASED")
+def release_targets() -> list[tuple[str, str]]:
+    """Environments to release, in order, as (name, SSM marker parameter).
+
+    RELEASE_TARGETS="uat=/ora-uat/release/last-commit;prod=/ora-staging/release/last-commit".
+    Falls back to a single "prod" target from RELEASE_PARAM (older single-environment setup).
+    """
+    raw = os.environ.get("RELEASE_TARGETS", "").strip()
+    if not raw:
+        return [("prod", os.environ.get("RELEASE_PARAM", ""))]
+    targets: list[tuple[str, str]] = []
+    for item in raw.split(";"):
+        if item.strip():
+            name, _, param = item.partition("=")
+            targets.append((name.strip(), param.strip()))
+    return targets
+
+
+def last_released_commit(name: str, param: str) -> str:
+    override = os.environ.get(f"LAST_RELEASED_{name.upper()}") or os.environ.get("LAST_RELEASED")
     if override:
         return override
-    param = os.environ["RELEASE_PARAM"]
+    if not param:
+        return "none"
     res = run(
         [
             "aws",
@@ -239,24 +259,37 @@ def main() -> int:
     dist.mkdir(parents=True)
 
     head = run(["git", "rev-parse", "HEAD"], cwd=src).stdout.strip()
-    base = last_released_commit()
-    cs = detect_changes(src, base, head)
-    changed = cs.backend_changed(force)
-    print(f"commit {head}  last released {base}  backend_changed={changed}")
-    for p in cs.runtime_files:
-        print(f"  changed: {p}")
-    for p in cs.new_migrations:
-        print(f"  new migration: {p}")
 
+    # Each environment is compared with ITS last released commit: UAT and production can be at
+    # different commits (e.g. a release waiting for UAT sign-off). One package serves both.
+    per_target: dict[str, dict[str, object]] = {}
+    change_sets: dict[str, ChangeSet] = {}
+    for name, param in release_targets():
+        base = last_released_commit(name, param)
+        cs = detect_changes(src, base, head)
+        target_changed = cs.backend_changed(force)
+        change_sets[name] = cs
+        per_target[name] = {
+            "last_released": base,
+            "backend_changed": target_changed,
+            "has_migrations": cs.has_migrations() if target_changed else False,
+            "runtime_files": cs.runtime_files,
+            "new_migrations": cs.new_migrations,
+        }
+        print(f"[{name}] commit {head}  last released {base}  backend_changed={target_changed}")
+        for p in cs.runtime_files:
+            print(f"  changed: {p}")
+        for p in cs.new_migrations:
+            print(f"  new migration: {p}")
+
+    changed = any(bool(t["backend_changed"]) for t in per_target.values())
     release: dict[str, object] = {
         "commit": head,
         "commit_short": head[:8],
-        "last_released": base,
         "backend_changed": changed,
         "forced": force,
-        "has_migrations": cs.has_migrations() if changed else False,
-        "runtime_files": cs.runtime_files,
-        "new_migrations": cs.new_migrations,
+        "has_migrations": any(bool(t["has_migrations"]) for t in per_target.values()),
+        "targets": per_target,
     }
     vuln_count: int | None = None
 
@@ -291,7 +324,10 @@ def main() -> int:
             print("FAILED: known-vulnerable dependencies (PIP_AUDIT_ENFORCE=true)")
             return 1
 
-    summary = summary_line(cs, force, vuln_count, enforce)
+    summary = " | ".join(
+        f"{name}: {summary_line(cs, force, vuln_count, enforce)}"
+        for name, cs in change_sets.items()
+    )[:900]
     release["summary"] = summary
     (dist / "release.json").write_text(json.dumps(release, indent=2))
     # The Deploy stage runs from this artifact, so it carries its own buildspec and script.
@@ -304,8 +340,12 @@ def main() -> int:
         "HAS_MIGRATIONS": "true" if release["has_migrations"] else "false",
         "COMMIT": head,
         "COMMIT_SHORT": head[:8],
-        "SUMMARY": summary,
+        # Shown in the approval request, whose CustomData is limited to 500 characters.
+        "SUMMARY": summary[:300],
     }
+    # UAT_CHANGED / PROD_CHANGED: CodePipeline skips that environment's Deploy stage when false.
+    for name, t in per_target.items():
+        exported[f"{name.upper()}_CHANGED"] = "true" if t["backend_changed"] else "false"
     (src / "release.env").write_text(
         "".join(f"{k}={shlex.quote(v)}\n" for k, v in exported.items())
     )

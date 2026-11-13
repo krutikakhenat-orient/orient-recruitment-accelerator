@@ -7,7 +7,7 @@ param(
     [switch]$Force,
     [string]$Profile = "Orient_Internal_AI",
     [string]$Region = "ap-south-1",
-    [string]$Pipeline = "ora-staging-backend"
+    [string]$Pipeline = "ora-release"
 )
 $ErrorActionPreference = "Continue"
 $env:AWS_PROFILE = $Profile
@@ -19,4 +19,4 @@ $id = aws codepipeline start-pipeline-execution --name $Pipeline --region $Regio
 if ($LASTEXITCODE) { throw "Could not start $Pipeline (aws sso login --profile $Profile ?)" }
 Write-Host "Started $Pipeline execution $id (FORCE_RELEASE=$forceValue)"
 Write-Host "Watch: https://$Region.console.aws.amazon.com/codesuite/codepipeline/pipelines/$Pipeline/executions/$id/timeline?region=$Region"
-Write-Host "It waits at Approve for your approval (email or console) before anything is deployed."
+Write-Host "It releases the current develop to UAT, then waits at Approve (UAT sign-off) before production."

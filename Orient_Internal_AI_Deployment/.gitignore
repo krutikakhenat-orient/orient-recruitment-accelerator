@@ -1,6 +1,7 @@
 .build/
 .agent_runtime_arn
 terraform/.terraform/
+terraform/.terraform-*/
 terraform/.build/
 terraform/backend.hcl
 terraform/.app_base_url

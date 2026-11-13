@@ -1,14 +1,17 @@
 # Backend release pipeline. See docs/backend-cicd-pipeline.md.
 #
-#   CodeCommit main --(EventBridge)--> CodePipeline V2 (QUEUED)
-#     Source  -> Verify (Tests | Security) -> Build -> Approve* -> Deploy*
-#   * skipped when the commit changes nothing the Lambda runs (Build.BACKEND_CHANGED != "true").
+#   CodeCommit develop --(EventBridge)--> CodePipeline V2 ora-release (QUEUED)
+#     Source -> Verify (Tests | Security) -> Build (one package)
+#       -> DeployUAT* -> Approve (UAT sign-off) -> DeployProd* -> Promote (fast-forward main)
+#   * skipped when that environment already runs this backend (Build.UAT_CHANGED / PROD_CHANGED).
+#   The production frontend (Amplify, branch main) builds after Promote moves main.
 #
 # The pipeline releases Lambda CODE only. Infrastructure stays Terraform-managed and applied
-# locally (terraform/), so no pipeline role can create or change infrastructure.
+# locally (terraform/, scripts/tf.ps1), so no pipeline role can create or change infrastructure.
 
 data "aws_caller_identity" "current" {}
 
+# Production app stack (resource prefix ora-staging, historical name).
 data "terraform_remote_state" "app" {
   backend = "s3"
   config = {
@@ -19,17 +22,35 @@ data "terraform_remote_state" "app" {
   }
 }
 
+# UAT app stack (resource prefix ora-uat).
+data "terraform_remote_state" "app_uat" {
+  backend = "s3"
+  config = {
+    bucket  = var.state_bucket
+    key     = var.uat_state_key
+    region  = var.region
+    profile = var.aws_profile != "" ? var.aws_profile : null
+  }
+}
+
 locals {
   prefix        = "${var.name}-${var.environment}"
   account_id    = data.aws_caller_identity.current.account_id
-  app           = data.terraform_remote_state.app.outputs
+  app           = data.terraform_remote_state.app.outputs     # production
+  uat           = data.terraform_remote_state.app_uat.outputs # UAT
+  uat_prefix    = "${var.name}-uat"
   buildspec_dir = "Orient_Internal_AI_Deployment/buildspec"
   image         = "aws/codebuild/amazonlinux-x86_64-standard:5.0"
   snapshot_arn  = "arn:aws:rds:${var.region}:${local.account_id}:cluster-snapshot:ora-pre-*"
 
-  # Approve and Deploy run only when Build says the commit changes Lambda code (or FORCE_RELEASE).
-  backend_changed_rule = {
-    Variable = "#{Build.BACKEND_CHANGED}"
+  # Each Deploy stage runs only when that environment does not already run this backend.
+  uat_changed_rule = {
+    Variable = "#{Build.UAT_CHANGED}"
+    Value    = "true"
+    Operator = "EQ"
+  }
+  prod_changed_rule = {
+    Variable = "#{Build.PROD_CHANGED}"
     Value    = "true"
     Operator = "EQ"
   }
@@ -94,7 +115,18 @@ resource "aws_s3_bucket_policy" "pipeline_tls_only" {
 # Last commit released to production. Build diffs against it; Deploy updates it.
 resource "aws_ssm_parameter" "last_release" {
   name        = "/${local.prefix}/release/last-commit"
-  description = "Last backend commit released by ${local.prefix}-backend (written by the Deploy stage)"
+  description = "Last backend commit released to PRODUCTION (written by the DeployProd stage)"
+  type        = "String"
+  value       = "none"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "last_release_uat" {
+  name        = "/${local.uat_prefix}/release/last-commit"
+  description = "Last backend commit released to UAT (written by the DeployUAT stage)"
   type        = "String"
   value       = "none"
 
@@ -177,7 +209,7 @@ resource "aws_iam_role_policy" "ci" {
         Sid      = "ReadReleaseMarker"
         Effect   = "Allow"
         Action   = ["ssm:GetParameter"]
-        Resource = aws_ssm_parameter.last_release.arn
+        Resource = [aws_ssm_parameter.last_release.arn, aws_ssm_parameter.last_release_uat.arn]
       },
     ]
   })
@@ -314,6 +346,8 @@ resource "aws_iam_role_policy" "pipeline" {
           aws_codebuild_project.security.arn,
           aws_codebuild_project.build.arn,
           aws_codebuild_project.deploy.arn,
+          aws_codebuild_project.deploy_uat.arn,
+          aws_codebuild_project.promote.arn,
         ]
       },
       {
@@ -399,8 +433,9 @@ resource "aws_codebuild_project" "build" {
     image        = local.image
     type         = "LINUX_CONTAINER"
     environment_variable {
-      name  = "RELEASE_PARAM"
-      value = aws_ssm_parameter.last_release.name
+      # Build compares the commit with what each environment runs today.
+      name  = "RELEASE_TARGETS"
+      value = "uat=${aws_ssm_parameter.last_release_uat.name};prod=${aws_ssm_parameter.last_release.name}"
     }
     environment_variable {
       name  = "PIP_AUDIT_ENFORCE"
@@ -463,6 +498,10 @@ resource "aws_codebuild_project" "deploy" {
       name  = "SNAPSHOT_TAGS"
       value = jsonencode(local.snapshot_tags)
     }
+    environment_variable {
+      name  = "RELEASE_TARGET"
+      value = "prod"
+    }
   }
   logs_config {
     cloudwatch_logs {
@@ -474,7 +513,7 @@ resource "aws_codebuild_project" "deploy" {
 
 # ---------------------------------------------------------------- pipeline
 resource "aws_codepipeline" "backend" {
-  name           = "${local.prefix}-backend"
+  name           = "${var.name}-release"
   role_arn       = aws_iam_role.pipeline.arn
   pipeline_type  = "V2"
   execution_mode = "QUEUED"
@@ -553,50 +592,68 @@ resource "aws_codepipeline" "backend" {
     }
   }
 
+  # UAT: automatic, no approval. Skipped if UAT already runs this backend.
   stage {
-    name = "Approve"
+    name = "DeployUAT"
     before_entry {
       condition {
         result = "SKIP"
         rule {
-          name = "BackendChanged"
+          name = "UatBackendChanged"
           rule_type_id {
             category = "Rule"
             owner    = "AWS"
             provider = "VariableCheck"
             version  = "1"
           }
-          configuration = local.backend_changed_rule
+          configuration = local.uat_changed_rule
         }
       }
     }
     action {
-      name     = "ReleaseApproval"
+      name            = "Release"
+      category        = "Build"
+      owner           = "AWS"
+      provider        = "CodeBuild"
+      version         = "1"
+      input_artifacts = ["BuildOutput"]
+      configuration   = { ProjectName = aws_codebuild_project.deploy_uat.name }
+    }
+  }
+
+  # UAT sign-off. Every commit needs it to reach production (frontend changes included).
+  # Rejecting stops this commit; production is untouched.
+  stage {
+    name = "Approve"
+    action {
+      name     = "ProductionApproval"
       category = "Approval"
       owner    = "AWS"
       provider = "Manual"
       version  = "1"
       configuration = {
-        NotificationArn = aws_sns_topic.approvals.arn
-        CustomData      = "Backend release #{Build.COMMIT_SHORT}: #{Build.SUMMARY}. Full details: Build stage log (release.json). Approve only if new migrations keep the previous version working."
+        NotificationArn    = aws_sns_topic.approvals.arn
+        ExternalEntityLink = local.uat.amplify_url
+        CustomData         = "Promote #{Build.COMMIT_SHORT} to PRODUCTION after testing it in UAT (link). #{Build.SUMMARY}"
       }
     }
   }
 
+  # Production: the same package that ran in UAT. Skipped if production already runs it.
   stage {
-    name = "Deploy"
+    name = "DeployProd"
     before_entry {
       condition {
         result = "SKIP"
         rule {
-          name = "BackendChanged"
+          name = "ProdBackendChanged"
           rule_type_id {
             category = "Rule"
             owner    = "AWS"
             provider = "VariableCheck"
             version  = "1"
           }
-          configuration = local.backend_changed_rule
+          configuration = local.prod_changed_rule
         }
       }
     }
@@ -610,9 +667,23 @@ resource "aws_codepipeline" "backend" {
       configuration   = { ProjectName = aws_codebuild_project.deploy.name }
     }
   }
+
+  # Fast-forward main to this commit: Amplify then builds the production frontend from it.
+  stage {
+    name = "Promote"
+    action {
+      name            = "FastForwardMain"
+      category        = "Build"
+      owner           = "AWS"
+      provider        = "CodeBuild"
+      version         = "1"
+      input_artifacts = ["SourceOutput"]
+      configuration   = { ProjectName = aws_codebuild_project.promote.name }
+    }
+  }
 }
 
-# ---------------------------------------------------------------- trigger: push to main
+# ---------------------------------------------------------------- trigger: push to develop
 resource "aws_iam_role" "events" {
   name = "${local.prefix}-pipeline-trigger"
   assume_role_policy = jsonencode({
@@ -641,7 +712,7 @@ resource "aws_iam_role_policy" "events" {
 
 resource "aws_cloudwatch_event_rule" "main_push" {
   name        = "${local.prefix}-backend-release-on-push"
-  description = "Start ${local.prefix}-backend when CodeCommit ${var.branch} changes"
+  description = "Start ${var.name}-release when CodeCommit ${var.branch} changes"
   event_pattern = jsonencode({
     source        = ["aws.codecommit"]
     "detail-type" = ["CodeCommit Repository State Change"]

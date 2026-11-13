@@ -6,6 +6,8 @@ env:
   shell: bash
   exported-variables:
     - BACKEND_CHANGED
+    - UAT_CHANGED
+    - PROD_CHANGED
     - HAS_MIGRATIONS
     - COMMIT
     - COMMIT_SHORT
