@@ -184,6 +184,24 @@ def test_bedrock_sidecar_carries_filter_metadata() -> None:
     sidecar = json.loads(captured[1]["Body"])["metadataAttributes"]
     assert sidecar["organisation_id"] == str(org_id)
     assert sidecar["audience"] == ["role:recruiter"] and sidecar["version"] == 3
+    assert sidecar["effective_date"] == "2026-01-01"
+
+
+def test_bedrock_sidecar_has_no_empty_values() -> None:
+    # Regression from the Phase 0 trial: Bedrock ignores a file whose sidecar has an empty
+    # attribute value (e.g. effective_date: "").
+    h = BedrockHarness(None)
+    meta = PolicyMetadata(organisation_id=uuid.uuid4(), policy_id=uuid.uuid4(), version=1,
+                          title="SYNTHETIC", kind="policy", audience=[])
+    captured: list[dict[str, Any]] = []
+    h.s3.meta.events.register("before-parameter-build.s3.PutObject",
+                              lambda params, **_: captured.append(dict(params)))
+    h.expect_put()
+    h.kb.put_document(meta, b"synthetic", extension=".md", content_type="text/markdown")
+    sidecar = json.loads(captured[1]["Body"])["metadataAttributes"]
+    assert "effective_date" not in sidecar
+    assert all(v not in ("", [], None) for v in sidecar.values())
+    assert sidecar["audience"] == [EVERYONE]
 
 
 def test_bedrock_busy_and_failed_jobs() -> None:

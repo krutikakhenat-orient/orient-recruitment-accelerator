@@ -132,8 +132,10 @@ class Settings(BaseSettings):
     hr_chatbot_model_id: str | None = None
     guardrail_id: str | None = None
     guardrail_version: str = "DRAFT"
-    # Minimum Bedrock retrieval score (0..1) for a passage to be used in an answer.
-    chatbot_min_score: float = Field(default=0.4, ge=0.0, le=1.0)
+    # Minimum Bedrock retrieval score (0..1) for a passage to be used in an answer. Phase 0
+    # trial (Titan Embed V2, S3 Vectors, cosine): relevant passages 0.73-0.85, unrelated
+    # 0.49-0.60. Retune with the real policy set (tasks.md 7.4).
+    chatbot_min_score: float = Field(default=0.65, ge=0.0, le=1.0)
     chatbot_top_k: int = Field(default=5, ge=1, le=20)
     # Per-user and per-client-address limit on /assistant/ask (requests per minute).
     chatbot_rate_limit_per_minute: int = Field(default=20, ge=1, le=600)

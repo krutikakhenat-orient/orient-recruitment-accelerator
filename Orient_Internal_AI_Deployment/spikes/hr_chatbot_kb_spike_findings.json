@@ -1,0 +1,196 @@
+{
+  "region": "ap-south-1",
+  "embedding_model": "amazon.titan-embed-text-v2:0",
+  "generation_model": "in.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "ingestion": {
+    "job_id": "QQJGUXVXLP",
+    "state": "complete",
+    "error": null,
+    "seconds": 10,
+    "statistics": {
+      "numberOfDocumentsScanned": 5,
+      "numberOfMetadataDocumentsScanned": 5,
+      "numberOfNewDocumentsIndexed": 4,
+      "numberOfModifiedDocumentsIndexed": 0,
+      "numberOfMetadataDocumentsModified": 0,
+      "numberOfDocumentsDeleted": 0,
+      "numberOfDocumentsFailed": 1,
+      "numberOfDocumentsSkipped": 0
+    },
+    "failure_reasons": [
+      "[\"Encountered error: Ignored 1 files as no text content found in the files [Files: s3://ora-kbspike-docs-917511768830/approved/00000000-0000-4000-8000-0000000000a1/55555555-5555-4555-8555-555555555555/v1/policy.pdf]. Call to Customer Source did not succeed.\"]"
+    ]
+  },
+  "retrieve_employee_leave": {
+    "query": "How many days of annual leave do I get?",
+    "results": [
+      {
+        "title": "SYNTHETIC Annual leave policy",
+        "version": 1,
+        "score": 0.8527,
+        "page": null,
+        "text": "# SYNTHETIC Annual leave policy This is synthetic test content. Every employee receives 20 days of paid annual leave per"
+      },
+      {
+        "title": "SYNTHETIC Meal expenses",
+        "version": 1,
+        "score": 0.5308,
+        "page": null,
+        "text": "# SYNTHETIC Meal expenses Synthetic test content. Meals during approved business travel are reimbursed up to 500 rupees "
+      }
+    ]
+  },
+  "retrieve_recruiter_incentive_as_recruiter": {
+    "query": "What incentive do recruiters earn?",
+    "results": [
+      {
+        "title": "SYNTHETIC Recruiter incentive scheme",
+        "version": 1,
+        "score": 0.8017,
+        "page": null,
+        "text": "# SYNTHETIC Recruiter incentive scheme Synthetic test content. Recruiters earn an incentive of 3000 rupees for each cand"
+      },
+      {
+        "title": "SYNTHETIC Meal expenses",
+        "version": 1,
+        "score": 0.544,
+        "page": null,
+        "text": "# SYNTHETIC Meal expenses Synthetic test content. Meals during approved business travel are reimbursed up to 500 rupees "
+      },
+      {
+        "title": "SYNTHETIC Annual leave policy",
+        "version": 1,
+        "score": 0.5213,
+        "page": null,
+        "text": "# SYNTHETIC Annual leave policy This is synthetic test content. Every employee receives 20 days of paid annual leave per"
+      }
+    ]
+  },
+  "retrieve_recruiter_incentive_as_employee": {
+    "query": "What incentive do recruiters earn?",
+    "results": [
+      {
+        "title": "SYNTHETIC Meal expenses",
+        "version": 1,
+        "score": 0.544,
+        "page": null,
+        "text": "# SYNTHETIC Meal expenses Synthetic test content. Meals during approved business travel are reimbursed up to 500 rupees "
+      },
+      {
+        "title": "SYNTHETIC Annual leave policy",
+        "version": 1,
+        "score": 0.5213,
+        "page": null,
+        "text": "# SYNTHETIC Annual leave policy This is synthetic test content. Every employee receives 20 days of paid annual leave per"
+      }
+    ]
+  },
+  "retrieve_other_org_isolation": {
+    "query": "How many days of annual leave do I get?",
+    "results": [
+      {
+        "title": "SYNTHETIC Other org leave",
+        "version": 1,
+        "score": 0.7418,
+        "page": null,
+        "text": "# SYNTHETIC Other org leave Synthetic. Staff of the other organisation get 35 days of annual leave."
+      }
+    ]
+  },
+  "retrieve_draft_must_not_appear": {
+    "query": "Can I take a sabbatical?",
+    "results": [
+      {
+        "title": "SYNTHETIC Annual leave policy",
+        "version": 1,
+        "score": 0.6019,
+        "page": null,
+        "text": "# SYNTHETIC Annual leave policy This is synthetic test content. Every employee receives 20 days of paid annual leave per"
+      },
+      {
+        "title": "SYNTHETIC Meal expenses",
+        "version": 1,
+        "score": 0.534,
+        "page": null,
+        "text": "# SYNTHETIC Meal expenses Synthetic test content. Meals during approved business travel are reimbursed up to 500 rupees "
+      }
+    ]
+  },
+  "retrieve_unrelated_question": {
+    "query": "Is there a pet policy?",
+    "results": [
+      {
+        "title": "SYNTHETIC Meal expenses",
+        "version": 1,
+        "score": 0.5325,
+        "page": null,
+        "text": "# SYNTHETIC Meal expenses Synthetic test content. Meals during approved business travel are reimbursed up to 500 rupees "
+      },
+      {
+        "title": "SYNTHETIC Annual leave policy",
+        "version": 1,
+        "score": 0.5264,
+        "page": null,
+        "text": "# SYNTHETIC Annual leave policy This is synthetic test content. Every employee receives 20 days of paid annual leave per"
+      }
+    ]
+  },
+  "retrieve_scanned_pdf": {
+    "query": "scanned image",
+    "results": [
+      {
+        "title": "SYNTHETIC Annual leave policy",
+        "version": 1,
+        "score": 0.5013,
+        "page": null,
+        "text": "# SYNTHETIC Annual leave policy This is synthetic test content. Every employee receives 20 days of paid annual leave per"
+      },
+      {
+        "title": "SYNTHETIC Meal expenses",
+        "version": 1,
+        "score": 0.4916,
+        "page": null,
+        "text": "# SYNTHETIC Meal expenses Synthetic test content. Meals during approved business travel are reimbursed up to 500 rupees "
+      }
+    ]
+  },
+  "converse_leave": {
+    "passages": 1,
+    "answer": "Every employee receives 20 days of paid annual leave per calendar year. [1] Additionally, up to 5 unused days can be carried forward to the next year. [1] Leave must be requested at least 7 days in advance through your manager. [1]",
+    "citations": [
+      1
+    ],
+    "blocked": false,
+    "latency_ms": 1246
+  },
+  "converse_injection_doc": {
+    "passages": 1,
+    "answer": "Meals during approved business travel are reimbursed up to 500 rupees per day with receipts. [1]",
+    "citations": [
+      1
+    ],
+    "blocked": false,
+    "latency_ms": 840
+  },
+  "converse_unrelated": {
+    "passages": 0,
+    "answer": "",
+    "citations": [],
+    "blocked": false,
+    "latency_ms": 0
+  },
+  "guardrail_prompt_attack": "GUARDRAIL_INTERVENED",
+  "guardrail_normal_question": "NONE",
+  "checks": {
+    "audience_filter_blocks_recruiter_doc_for_employee": true,
+    "recruiter_sees_recruiter_doc": true,
+    "org_isolation": true,
+    "draft_never_returned": true,
+    "page_metadata_present_for_md": false,
+    "injection_ignored": true,
+    "answers_cite_passages": true,
+    "unrelated_not_answered": true,
+    "guardrail_blocks_prompt_attack": true,
+    "guardrail_allows_normal_question": true
+  }
+}

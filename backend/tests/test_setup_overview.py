@@ -28,7 +28,8 @@ def _add_draft_campaign(engine, org_id) -> uuid.UUID:  # type: ignore[no-untyped
 def test_overview_lists_only_the_callers_assigned_jobs(client, engine) -> None:  # type: ignore[no-untyped-def]
     data = _seed(engine)
     _add_draft_campaign(engine, data["org_id"])
-    resp = client.get("/api/v1/campaigns/setup-overview", headers=_login(client, "admin@example.com"))
+    resp = client.get("/api/v1/campaigns/setup-overview",
+                      headers=_login(client, "admin@example.com"))
     assert resp.status_code == 200, resp.text
     rows = resp.json()
     assert [r["campaign_id"] for r in rows] == [str(data["campaign_id"])]
@@ -42,7 +43,8 @@ def test_overview_lists_only_the_callers_assigned_jobs(client, engine) -> None: 
 
 def test_overview_is_empty_for_people_who_do_not_set_up_jobs(client, engine) -> None:  # type: ignore[no-untyped-def]
     _seed(engine)
-    resp = client.get("/api/v1/campaigns/setup-overview", headers=_login(client, "panel@example.com"))
+    resp = client.get("/api/v1/campaigns/setup-overview",
+                      headers=_login(client, "panel@example.com"))
     assert resp.status_code == 200
     assert resp.json() == []
 

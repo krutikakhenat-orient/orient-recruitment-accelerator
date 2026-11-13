@@ -56,15 +56,22 @@ def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def build_prompt(question: str, passages: list[Passage]) -> str:
+def build_passages(passages: list[Passage]) -> str:
     parts = ["<passages>"]
     for i, p in enumerate(passages, start=1):
         parts.append(f'<passage id="{i}" title="{_escape(p.title)}" version="{p.version}">')
         parts.append(_escape(p.text))
         parts.append("</passage>")
     parts.append("</passages>")
-    parts.append(f"<question>{_escape(question)}</question>")
     return "\n".join(parts)
+
+
+def build_question(question: str) -> str:
+    return f"<question>{_escape(question)}</question>"
+
+
+def build_prompt(question: str, passages: list[Passage]) -> str:
+    return f"{build_passages(passages)}\n{build_question(question)}"
 
 
 def parse_citations(text: str, passage_count: int) -> list[int]:
@@ -99,10 +106,20 @@ class BedrockConverseComposer:
         self._max_tokens = max_tokens
 
     def compose(self, question: str, passages: list[Passage]) -> ComposedAnswer:
+        content: list[dict[str, Any]] = [{"text": build_prompt(question, passages)}]
+        if self._guardrail_id:
+            # Guard only the QUESTION (guardContent). Verified in the Phase 0 trial: guarding
+            # the whole prompt let one hostile policy document trip PROMPT_ATTACK and block
+            # every answer whose top passages included it. Passages are untrusted data the
+            # model is told to ignore instructions in; the output is still guarded.
+            content = [
+                {"text": build_passages(passages)},
+                {"guardContent": {"text": {"text": build_question(question)}}},
+            ]
         kwargs: dict[str, Any] = {
             "modelId": self._model_id,
             "system": [{"text": SYSTEM_PROMPT}],
-            "messages": [{"role": "user", "content": [{"text": build_prompt(question, passages)}]}],
+            "messages": [{"role": "user", "content": content}],
             "inferenceConfig": {"maxTokens": self._max_tokens, "temperature": 0.0},
             # No toolConfig: the model cannot call tools (Req 5.2).
         }

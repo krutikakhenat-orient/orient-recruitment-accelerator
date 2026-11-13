@@ -9,12 +9,13 @@ Phase 0 (spike), the Terraform tasks and the UAT rollout remain.
 
 ## Phase 0: Spike and decisions
 
-- [ ] 0.1 Manually create in Orient_Internal_AI (ap-south-1): Docs Bucket, S3 Vectors bucket and index, Knowledge Base, data source on `approved/`. Ingest 3 synthetic policies and test `Retrieve` and `Converse`. _Req 9.6_
-  - Record: region support, model access, data-residency behaviour, metadata limits, scanned-PDF behaviour, chunking results.
-  - Also verify: `listContains` filter on the list attribute `audience` with an S3 Vectors store (used by `knowledge_base/bedrock.py::build_filter`).
-- [ ] 0.2 Check Terraform provider support for the KB with S3 Vectors; decide Terraform versus script. _Req 9.5_
-- [ ] 0.3 Write ADR `docs/adr/ADR-00xx-hr-policy-chatbot-bedrock-kb.md`. _Req 9, 6_
+- [x] 0.1 Manually create in Orient_Internal_AI (ap-south-1): Docs Bucket, S3 Vectors bucket and index, Knowledge Base, data source on `approved/`. Ingest 3 synthetic policies and test `Retrieve` and `Converse`. _Req 9.6_
+  - Done 2026-11-13 and torn down; see `docs/hr-chatbot-phase0-findings.md`. Fixed 2 bugs found (empty sidecar attribute; guardrail on quoted passages) and raised the score threshold to 0.65.
+- [x] 0.2 Check Terraform provider support for the KB with S3 Vectors; decide Terraform versus script. _Req 9.5_
+  - AWS provider 6.72.0 supports every resource: Terraform.
+- [x] 0.3 Write ADR `docs/adr/ADR-0017-hr-policy-chatbot-bedrock-kb.md`. _Req 9, 6_
 - [ ] 0.4 Resolve open questions in requirements.md (audience, residency, model, email, language).
+  - Partly answered by the trial: an India-only Claude Haiku 4.5 profile exists, so residency can be met. Still a business decision.
   - Interim choices in code: audience = `everyone` + `role:<role>` tags (department/location tags accepted but no user profile field yet); "Send to HR" is in-app only; English only.
 
 ## Phase 1: Infrastructure

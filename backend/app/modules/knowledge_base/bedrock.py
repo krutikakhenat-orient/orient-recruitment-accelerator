@@ -82,18 +82,20 @@ class BedrockKnowledgeBase:
         self, metadata: PolicyMetadata, data: bytes, *, extension: str, content_type: str
     ) -> str:
         key = approved_key(metadata, extension)
-        sidecar = {
-            "metadataAttributes": {
-                "organisation_id": str(metadata.organisation_id),
-                "policy_id": str(metadata.policy_id),
-                "version": metadata.version,
-                "title": metadata.title[:200],
-                "kind": metadata.kind,
-                "audience": metadata.audience,
-                "effective_date": metadata.effective_date.isoformat()
-                if metadata.effective_date else "",
-            }
+        attributes: dict[str, Any] = {
+            "organisation_id": str(metadata.organisation_id),
+            "policy_id": str(metadata.policy_id),
+            "version": metadata.version,
+            "title": metadata.title[:200],
+            "kind": metadata.kind,
+            "audience": metadata.audience or ["everyone"],
         }
+        if metadata.effective_date:
+            attributes["effective_date"] = metadata.effective_date.isoformat()
+        # Bedrock rejects the WHOLE file if any attribute value is empty (verified in the
+        # Phase 0 trial: "Ignored 5 files due to invalid metadata attributes"), so omit
+        # optional attributes instead of sending "".
+        sidecar = {"metadataAttributes": attributes}
         try:
             self._s3.put_object(Bucket=self._bucket, Key=key, Body=data, ContentType=content_type)
             self._s3.put_object(
