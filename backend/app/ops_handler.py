@@ -6,6 +6,8 @@ Event shapes:
     {"action": "seed"}      seed SYNTHETIC trial data (idempotent); optionally installs the
                             induction video found in the files bucket at ``_seed/<name>``
     {"action": "migrate_and_seed"}  both, in order
+    {"action": "purge_recordings"}  delete AI-interview video evidence past its retention date
+                                    (audited). Run daily, e.g. from an EventBridge schedule.
 
 Security: the event carries no secrets and no SQL; actions are a closed whitelist.
 """
@@ -17,7 +19,7 @@ import pathlib
 import tempfile
 from typing import Any
 
-_ACTIONS = {"migrate", "seed", "migrate_and_seed"}
+_ACTIONS = {"migrate", "seed", "migrate_and_seed", "purge_recordings"}
 _SEED_VIDEO_KEY = "_seed/induction-video.mp4"
 
 
@@ -76,6 +78,23 @@ def _seed() -> str:
     return "seeded synthetic data" + (f"; {note}" if note else "; placeholder video")
 
 
+def _purge_recordings() -> str:
+    from app.db.session import SessionLocal
+    from app.modules.ai_interviews.recording import purge_expired_recordings
+    from app.modules.documents.storage import default_object_store
+
+    db = SessionLocal()
+    try:
+        count = purge_expired_recordings(db, store=default_object_store)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return f"deleted {count} expired interview recording(s)"
+
+
 def handler(event: dict[str, Any], _context: Any) -> dict[str, str]:
     action = event.get("action")
     if action not in _ACTIONS:
@@ -83,6 +102,8 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, str]:
     results: list[str] = []
     if action in {"migrate", "migrate_and_seed"}:
         results.append(_migrate())
+    if action == "purge_recordings":
+        results.append(_purge_recordings())
     if action in {"seed", "migrate_and_seed"}:
         results.append(_seed())
     return {"status": "ok", "result": "; ".join(results)}

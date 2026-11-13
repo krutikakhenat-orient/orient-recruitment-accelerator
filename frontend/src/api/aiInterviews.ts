@@ -3,7 +3,7 @@
 
 import { z } from "zod";
 
-import { apiFetch } from "./client";
+import { apiFetch, getAccessToken } from "./client";
 
 const uuid = z.string().uuid();
 
@@ -107,6 +107,9 @@ const preview = z.object({
   notice_text: z.string(),
   max_minutes: z.number(),
   text_input_allowed: z.boolean(),
+  video_recording_offered: z.boolean().optional(),
+  video_notice_version: z.string().nullish(),
+  video_notice_text: z.string().nullish(),
 });
 export type AiInterviewPreview = z.infer<typeof preview>;
 
@@ -114,6 +117,7 @@ const start = z.object({
   interview_id: uuid,
   ws_url: z.string(),
   join_token: z.string(),
+  recording_token: z.string().nullish(),
 });
 export type AiInterviewStart = z.infer<typeof start>;
 
@@ -123,11 +127,60 @@ export const previewAiInterview = (token: string) =>
     body: JSON.stringify({ token }),
   });
 
-export const startAiInterview = (token: string, noticeVersion: string) =>
+export const startAiInterview = (
+  token: string,
+  noticeVersion: string,
+  video?: { noticeVersion: string } | null,
+) =>
   apiFetch(`${base}/public/start`, start, {
     method: "POST",
-    body: JSON.stringify({ token, consent: true, notice_version: noticeVersion }),
+    body: JSON.stringify({
+      token,
+      consent: true,
+      notice_version: noticeVersion,
+      ...(video ? { video_consent: true, video_notice_version: video.noticeVersion } : {}),
+    }),
   });
+
+// ---------- video evidence (staff). Viewing needs candidate.view_pii and is audited. ----------
+const recording = z.object({
+  id: uuid,
+  session_id: uuid,
+  attempt_start: z.number(),
+  status: z.string(),
+  content_type: z.string(),
+  bytes_total: z.number(),
+  consent_given_at: z.string(),
+  finished_at: z.string().nullish(),
+  delete_after: z.string(),
+  created_at: z.string(),
+});
+export type AiRecording = z.infer<typeof recording>;
+
+export const listAiRecordings = (sessionId: string) =>
+  apiFetch(`${base}/sessions/${sessionId}/recordings`, z.array(recording));
+
+const playback = z.object({
+  url: z.string().nullish(),
+  content_type: z.string(),
+  expires_in_seconds: z.number().nullish(),
+});
+
+/** A URL the <video> element can play: a signed link (AWS) or a local blob URL. */
+export async function aiRecordingVideoUrl(recordingId: string): Promise<{ url: string; isBlob: boolean }> {
+  const p = await apiFetch(`${base}/recordings/${recordingId}/playback`, playback);
+  if (p.url) return { url: p.url, isBlob: false };
+  // Local storage: the stream needs the auth header, which a <video> tag cannot send.
+  const token = getAccessToken();
+  const resp = await fetch(`${base}/recordings/${recordingId}/stream`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!resp.ok) {
+    const body = (await resp.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message ?? "Could not load the recording.");
+  }
+  return { url: URL.createObjectURL(await resp.blob()), isBlob: true };
+}
 
 // ---------- advisory summary (rendered, never scored) ----------
 const summaryView = z

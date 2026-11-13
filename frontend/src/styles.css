@@ -477,6 +477,38 @@ table.data tbody tr:hover { background: var(--brand-100); }
 .apply-shell { max-width: 620px; margin: 56px auto; padding: 20px; }
 .apply-card { padding: 28px; }
 
+/* ---------- AI voice interview (candidate): wider two-column layout on big screens ---------- */
+.apply-shell--wide { max-width: 1180px; margin-top: 32px; }
+.ai-iv-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.ai-iv-grid--live { grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); }
+.ai-iv-grid > aside { position: sticky; top: 16px; }
+.ai-iv-log { height: min(56vh, 560px); overflow: auto; margin-bottom: 12px; }
+.ai-iv-log p { margin: 6px 0; }
+.ai-iv-side { display: flex; flex-direction: column; gap: 10px; }
+.ai-iv-selfview { width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; background: #000; object-fit: cover; }
+.ai-iv-rec { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.ai-iv-rec__dot { width: 10px; height: 10px; border-radius: 50%; background: #c62828; }
+@media (max-width: 960px) {
+  .ai-iv-grid, .ai-iv-grid--live { grid-template-columns: 1fr; }
+  .ai-iv-grid > aside { position: static; }
+  .ai-iv-log { height: 340px; }
+}
+
+/* Device check: status always shown as icon + word, never colour alone. */
+.device-check__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.device-check__item { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; }
+.device-check__icon { width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; font-weight: 700; font-size: 0.85rem; background: var(--surface-2); }
+.device-check__word { margin-left: 6px; font-size: 0.78rem; font-weight: 600; }
+.device-check__item--ok .device-check__icon { background: #e6f4ea; color: #1e6b34; }
+.device-check__item--ok .device-check__word { color: #1e6b34; }
+.device-check__item--warn .device-check__icon { background: #fff4e0; color: #8a5300; }
+.device-check__item--warn .device-check__word { color: #8a5300; }
+.device-check__item--fail .device-check__icon { background: #fdecea; color: #a4231b; }
+.device-check__item--fail .device-check__word { color: #a4231b; }
+.device-check__meter { display: block; height: 6px; margin-top: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; max-width: 240px; }
+.device-check__meter > span { display: block; height: 100%; background: #1e6b34; transition: width 80ms linear; }
+.device-check__preview { width: 100%; aspect-ratio: 16 / 9; margin-top: 12px; border-radius: 10px; background: #000; object-fit: cover; }
+
 /* Branded confirmation step shown after the candidate submits. */
 .apply-thankyou { max-width: 560px; }
 .apply-thankyou__card { text-align: center; }
@@ -948,3 +980,35 @@ table.report td.num { text-align: right; font-variant-numeric: tabular-nums; whi
 .campaign-status-line { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scroll-anchor { scroll-margin-top: 16px; }
 .scroll-anchor:focus { outline: none; }
+
+/* ---------- Dashboard: "Your jobs, step by step" ---------- */
+.job-progress { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.job-progress__row { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
+.job-progress__title { font-weight: 600; }
+.job-progress__badges { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 6px 0; }
+.job-progress__vis { display: inline-flex; align-items: center; gap: 5px; font-size: 0.82rem; }
+.job-progress__vis--on { color: var(--ok); }
+.job-progress__vis--off { color: var(--text-muted); }
+.job-progress__bar { display: flex; align-items: center; gap: 10px; }
+.job-progress__bar .progress { flex: 0 1 220px; }
+.job-progress__steps { list-style: none; margin: 8px 0 0; padding: 0; display: flex; gap: 6px; }
+.job-progress__step { width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 0.75rem; font-weight: 600; background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+.job-progress__step--done { background: var(--ok); color: #fff; border-color: var(--ok); }
+.job-progress__step--needs_approver { border-style: dashed; border-color: var(--warn, #b26a00); color: var(--warn, #b26a00); }
+.job-progress__step--next { outline: 2px solid var(--accent, #2563eb); outline-offset: 1px; color: var(--text); }
+.job-progress__next { margin: 8px 0 0; }
+@media (max-width: 720px) {
+  .job-progress__row { grid-template-columns: 1fr; }
+}
+
+/* ---------- Public jobs board (/apply) ---------- */
+.jobs-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.job-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.job-card:hover { border-color: var(--border-strong); }
+.job-card[aria-pressed="true"] { border-color: var(--accent, #2563eb); box-shadow: 0 0 0 1px var(--accent, #2563eb); }
+.job-card__title { font-weight: 600; font-size: 1.02rem; }
+.job-card__meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.job-card__chip { font-size: 0.78rem; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-muted); }
+.job-card__cta { margin-top: auto; font-weight: 600; font-size: 0.86rem; }
+.jobs-search { display: flex; gap: 8px; margin-bottom: 12px; }
+.jobs-search input { flex: 1; }

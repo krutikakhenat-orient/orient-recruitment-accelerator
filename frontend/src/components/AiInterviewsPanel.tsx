@@ -1,8 +1,10 @@
 ﻿import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 
 import {
+  aiRecordingVideoUrl,
   approveAiInterview,
+  listAiRecordings,
   createAiInterviewDraft,
   getAiInterviewTranscript,
   listAiInterviews,
@@ -698,6 +700,8 @@ function ResultDrawer({
         </>
       )}
 
+      <RecordingsSection sessionId={row.id} canView={canTranscript} />
+
       <h3 style={{ fontSize: "0.95rem" }}>Transcript</h3>
       {!canTranscript && (
         <p className="subtle">Reading the raw transcript needs the Recruiter Admin role.</p>
@@ -725,5 +729,91 @@ function ResultDrawer({
         </p>
       ))}
     </Drawer>
+  );
+}
+
+/* Video evidence the candidate agreed to. Evidence only: nothing analyses it and it plays no
+   part in any summary or decision. Watching needs the Recruiter Admin role and is audited. */
+function RecordingsSection({ sessionId, canView }: { sessionId: string; canView: boolean }): ReactNode {
+  const recordings = useQuery({
+    queryKey: ["ai-recordings", sessionId],
+    queryFn: () => listAiRecordings(sessionId),
+    enabled: canView,
+  });
+  const [playing, setPlaying] = useState<{ id: string; url: string; isBlob: boolean } | null>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  // Release a local blob URL when the player closes or changes.
+  useEffect(
+    () => () => {
+      if (playing?.isBlob) URL.revokeObjectURL(playing.url);
+    },
+    [playing],
+  );
+
+  if (!canView) {
+    return (
+      <>
+        <h3 style={{ fontSize: "0.95rem" }}>Video recording</h3>
+        <p className="subtle">Watching interview recordings needs the Recruiter Admin role.</p>
+      </>
+    );
+  }
+  const rows = recordings.data ?? [];
+  if (!recordings.isLoading && rows.length === 0) return null;
+
+  const watch = async (id: string): Promise<void> => {
+    setProblem(null);
+    setLoadingId(id);
+    try {
+      const { url, isBlob } = await aiRecordingVideoUrl(id);
+      setPlaying({ id, url, isBlob });
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : "Could not load the recording.");
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  return (
+    <>
+      <h3 style={{ fontSize: "0.95rem" }}>Video recording</h3>
+      <p className="subtle">
+        Kept as evidence only, with the candidate&rsquo;s consent. It is not analysed and is not
+        part of any assessment. Opening it is recorded in the audit trail.
+      </p>
+      {recordings.isLoading && <Loading />}
+      {problem && <ErrorNote>{problem}</ErrorNote>}
+      {rows.map((r) => (
+        <div key={r.id} className="card" style={{ marginBottom: 10 }}>
+          <div className="btn-row" style={{ alignItems: "center" }}>
+            <span>
+              Start {r.attempt_start} · {prettify(r.status)} ·{" "}
+              {(r.bytes_total / (1024 * 1024)).toFixed(1)} MB
+            </span>
+            {r.status !== "deleted" && (
+              <Button small disabled={loadingId === r.id} onClick={() => void watch(r.id)}>
+                {loadingId === r.id ? "Loading…" : "Watch recording"}
+              </Button>
+            )}
+          </div>
+          <p className="subtle" style={{ margin: "4px 0 0" }}>
+            {r.status === "deleted"
+              ? "Deleted under the retention policy."
+              : `Deleted automatically on ${new Date(r.delete_after).toLocaleDateString()}.`}
+          </p>
+          {playing?.id === r.id && (
+            <video
+              src={playing.url}
+              controls
+              playsInline
+              aria-label={`Interview recording, start ${r.attempt_start}`}
+              style={{ width: "100%", marginTop: 8, background: "#000" }}
+            />
+          )}
+        </div>
+      ))}
+    </>
   );
 }

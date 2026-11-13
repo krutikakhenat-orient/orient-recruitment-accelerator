@@ -95,3 +95,57 @@ class AiInterviewSession(UUIDPrimaryKey, Timestamped, Actioned, Base):
     # is the storage-layer strategy per security.md; plain JSON here.)
     summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     transcript: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
+
+class RecordingStatus(str, Enum):
+    # The browser is uploading chunks.
+    RECORDING = "recording"
+    # The browser said it finished (or the upload window closed); ready to play.
+    COMPLETE = "complete"
+    # Retention period passed, or removed on request: the video data is gone.
+    DELETED = "deleted"
+
+
+class AiInterviewRecording(UUIDPrimaryKey, Timestamped, Base):
+    """Video EVIDENCE of one interview attempt, kept for human review only.
+
+    Nothing analyses this video (responsible-ai.md): it is stored, played back to an
+    authorised reviewer, and deleted after the retention period. Each start of an interview
+    (a candidate may restart a limited number of times) gets its own recording.
+    The bytes live in the object store as numbered chunks under ``storage_prefix``; they are
+    joined into one file the first time someone plays the finished recording.
+    """
+
+    __tablename__ = "ai_interview_recording"
+
+    organisation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organisation.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ai_interview_session.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    campaign_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    attempt_start: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=RecordingStatus.RECORDING.value, index=True
+    )
+    consent_notice_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    consent_given_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # SHA-256 of the upload token the browser holds. Cleared when the upload finishes.
+    upload_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    upload_expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    content_type: Mapped[str] = mapped_column(String(64), nullable=False, default="video/webm")
+    storage_prefix: Mapped[str] = mapped_column(String(255), nullable=False)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bytes_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Set once the chunks are joined into a single playable file.
+    assembled_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delete_after: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

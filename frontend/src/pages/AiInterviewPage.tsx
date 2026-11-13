@@ -7,9 +7,16 @@ import {
   type AiInterviewPreview,
 } from "../api/aiInterviews";
 import { ApiError } from "../api/client";
+import { DeviceCheck } from "../components/DeviceCheck";
 import { Logo } from "../components/Logo";
 import { Button, Field } from "../components/ui";
 import { PcmPlayer, SAMPLE_RATE_HZ, startMicCapture, type MicCapture } from "../lib/interviewAudio";
+import {
+  openCamera,
+  pickVideoType,
+  startEvidenceRecording,
+  type EvidenceRecorder,
+} from "../lib/interviewVideo";
 
 /* Candidate-facing AI voice interview (public route /ai-interview/:token).
 
@@ -36,6 +43,13 @@ export function AiInterviewPage(): ReactNode {
   const [typed, setTyped] = useState("");
   const [textInput, setTextInput] = useState(false);
   const [micNote, setMicNote] = useState<string | null>(null);
+  // Video evidence: a SEPARATE, optional consent. Saying no never blocks the interview.
+  const [videoConsent, setVideoConsent] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [videoNote, setVideoNote] = useState<string | null>(null);
+  const camRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<EvidenceRecorder | null>(null);
+  const selfViewRef = useRef<HTMLVideoElement | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
@@ -52,6 +66,13 @@ export function AiInterviewPage(): ReactNode {
   }, []);
 
   const cleanup = useCallback(() => {
+    // Upload the last piece of video and close the recording (fire and forget).
+    const rec = recorderRef.current;
+    recorderRef.current = null;
+    if (rec) void rec.stop();
+    else camRef.current?.getTracks().forEach((t) => t.stop());
+    camRef.current = null;
+    setRecording(false);
     playerRef.current?.clear();
     micRef.current?.stop();
     micRef.current = null;
@@ -115,7 +136,37 @@ export function AiInterviewPage(): ReactNode {
         setTextInput(true);
       }
 
-      const started = await startAiInterview(token, preview.notice_version);
+      // Camera only if the candidate opted in. If it is refused or missing, carry on by voice.
+      if (videoConsent && preview.video_recording_offered && preview.video_notice_version) {
+        if (!pickVideoType()) {
+          setVideoNote("This browser cannot record video, so the interview continues by voice only.");
+        } else {
+          try {
+            camRef.current = await openCamera();
+          } catch {
+            setVideoNote("The camera is not available, so the interview continues by voice only.");
+          }
+        }
+      }
+
+      const started = await startAiInterview(
+        token,
+        preview.notice_version,
+        camRef.current && preview.video_notice_version
+          ? { noticeVersion: preview.video_notice_version }
+          : null,
+      );
+      if (camRef.current && started.recording_token) {
+        recorderRef.current = startEvidenceRecording(
+          camRef.current,
+          started.recording_token,
+          setVideoNote,
+        );
+        setRecording(recorderRef.current !== null);
+      } else if (camRef.current) {
+        camRef.current.getTracks().forEach((t) => t.stop());
+        camRef.current = null;
+      }
 
       // Attach every handler synchronously after creating the socket so no event is missed.
       const ws = new WebSocket(started.ws_url);
@@ -185,7 +236,13 @@ export function AiInterviewPage(): ReactNode {
       );
       setPhase("error");
     }
-  }, [addLine, cleanup, consent, preview, token]);
+  }, [addLine, cleanup, consent, preview, token, videoConsent]);
+
+  // Show the candidate their own camera while it records (they must always know).
+  useEffect(() => {
+    const el = selfViewRef.current;
+    if (el) el.srcObject = recording ? camRef.current : null;
+  }, [recording, phase]);
 
   const endInterview = (): void => {
     const ws = wsRef.current;
@@ -202,7 +259,9 @@ export function AiInterviewPage(): ReactNode {
   };
 
   return (
-    <div className="apply-shell">
+    <div
+      className={`apply-shell ${phase === "notice" || phase === "starting" || phase === "error" || phase === "live" ? "apply-shell--wide" : ""}`}
+    >
       <div className="apply-brandbar apply-brandbar--center">
         <Logo size={44} title="Orient" />
         <span className="apply-brandbar__name">Orient Recruitment</span>
@@ -227,7 +286,8 @@ export function AiInterviewPage(): ReactNode {
         )}
 
         {(phase === "notice" || phase === "starting" || phase === "error") && preview && (
-          <>
+          <div className="ai-iv-grid">
+          <div>
             <h1>Voice interview: {preview.role_title}</h1>
             <p>
               This takes up to {preview.max_minutes} minutes. Find a quiet place and use headphones
@@ -261,6 +321,36 @@ export function AiInterviewPage(): ReactNode {
                 answers being recorded as a transcript for human review.
               </span>
             </label>
+            {preview.video_recording_offered && preview.video_notice_text && (
+              <section
+                aria-labelledby="video-notice-h"
+                className="card"
+                style={{ margin: "12px 0" }}
+              >
+                <h2 id="video-notice-h" style={{ marginTop: 0, fontSize: "1.05rem" }}>
+                  Video recording (optional)
+                </h2>
+                <p>{preview.video_notice_text}</p>
+                <p className="subtle">Notice version: {preview.video_notice_version}</p>
+                <label
+                  htmlFor="ai-video-consent"
+                  style={{ display: "flex", gap: 8, alignItems: "flex-start" }}
+                >
+                  <input
+                    id="ai-video-consent"
+                    type="checkbox"
+                    checked={videoConsent}
+                    onChange={(e) => setVideoConsent(e.target.checked)}
+                    disabled={phase === "starting"}
+                  />
+                  <span>
+                    I agree to my camera and microphone being recorded as evidence of this
+                    interview. This is optional: leave it unticked to take the interview by voice
+                    only.
+                  </span>
+                </label>
+              </section>
+            )}
             <Button
               variant="primary"
               disabled={!consent || phase === "starting"}
@@ -268,16 +358,27 @@ export function AiInterviewPage(): ReactNode {
             >
               {phase === "starting" ? "Connecting…" : "Start interview"}
             </Button>
-          </>
+          </div>
+          <aside>
+            {/* Unmounted while connecting so the check releases the mic and camera first. */}
+            {phase !== "starting" && (
+              <DeviceCheck
+                wantVideo={
+                  videoConsent && !!preview.video_recording_offered && !!preview.video_notice_version
+                }
+              />
+            )}
+          </aside>
+          </div>
         )}
 
         {phase === "live" && (
-          <>
+          <div className="ai-iv-grid ai-iv-grid--live">
+          <div>
             <h1>Interview in progress</h1>
             <p className="subtle" role="status">
               Speak when the assistant finishes asking. You can stop at any time.
             </p>
-            {micNote && <p role="note">{micNote}</p>}
             {problem && (
               <div className="error-summary" role="alert">
                 {problem}
@@ -286,8 +387,7 @@ export function AiInterviewPage(): ReactNode {
             <div
               aria-live="polite"
               aria-label="Conversation"
-              className="card"
-              style={{ maxHeight: 340, overflow: "auto", marginBottom: 12 }}
+              className="card ai-iv-log"
             >
               {log.length === 0 && <p className="subtle">The assistant is about to speak…</p>}
               {log.map((l) => (
@@ -319,10 +419,33 @@ export function AiInterviewPage(): ReactNode {
                 </Field>
               </div>
             )}
+          </div>
+          <aside className="ai-iv-side">
+            {recording ? (
+              <>
+                <video
+                  ref={selfViewRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  aria-label="Your camera, being recorded"
+                  className="ai-iv-selfview"
+                />
+                <p role="status" className="ai-iv-rec">
+                  <span aria-hidden="true" className="ai-iv-rec__dot" />
+                  <strong>Recording video</strong>
+                </p>
+              </>
+            ) : (
+              <p className="subtle">Voice interview (no video).</p>
+            )}
+            {micNote && <p role="note">{micNote}</p>}
+            {videoNote && <p role="note">{videoNote}</p>}
             <Button variant="danger" onClick={endInterview}>
               End interview
             </Button>
-          </>
+          </aside>
+          </div>
         )}
 
         {phase === "ended" && (

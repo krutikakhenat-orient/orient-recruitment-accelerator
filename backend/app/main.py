@@ -110,7 +110,14 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Correlation-ID",
+            "Idempotency-Key",
+            # Upload token for AI-interview video evidence (kept out of URLs and logs).
+            "X-Recording-Token",
+        ],
     )
 
     _register_exception_handlers(app)
