@@ -194,22 +194,21 @@ export function JobsBoard({
                 {filters[key].size > 0 && <span className="jobs__badge">{filters[key].size}</span>}
               </summary>
               <ul>
-                {options[key].map(([value, n]) => {
-                  const id = `f-${key}-${value}`.replace(/\W+/g, "-");
-                  return (
-                    <li key={value}>
+                {options[key].map(([value, n]) => (
+                  <li key={value}>
+                    <label className="jobs__opt">
                       <input
-                        id={id}
                         type="checkbox"
                         checked={filters[key].has(value)}
                         onChange={() => toggle(key, value)}
                       />
-                      <label htmlFor={id}>
-                        {value} <span className="subtle">({n})</span>
-                      </label>
-                    </li>
-                  );
-                })}
+                      <span className="jobs__opt-text">{value}</span>
+                      <span className="jobs__opt-count" aria-label={`${n} jobs`}>
+                        {n}
+                      </span>
+                    </label>
+                  </li>
+                ))}
               </ul>
             </details>
           ),
@@ -224,14 +223,15 @@ export function JobsBoard({
               ] as const
             ).map(([value, text]) => (
               <li key={value}>
-                <input
-                  id={`sort-${value}`}
-                  type="radio"
-                  name="jobs-sort"
-                  checked={sort === value}
-                  onChange={() => setSort(value)}
-                />
-                <label htmlFor={`sort-${value}`}>{text}</label>
+                <label className="jobs__opt">
+                  <input
+                    type="radio"
+                    name="jobs-sort"
+                    checked={sort === value}
+                    onChange={() => setSort(value)}
+                  />
+                  <span className="jobs__opt-text">{text}</span>
+                </label>
               </li>
             ))}
           </ul>
@@ -239,6 +239,23 @@ export function JobsBoard({
       </aside>
 
       <section className="jobs__results" aria-label="Job openings">
+        {activeCount > 0 && (
+          <div className="jobs__chips" aria-label="Active filters">
+            {FILTER_SECTIONS.flatMap(({ key }) =>
+              [...filters[key]].map((value) => (
+                <button
+                  key={`${key}-${value}`}
+                  type="button"
+                  className="jobs__chip"
+                  aria-label={`Remove filter ${value}`}
+                  onClick={() => toggle(key, value)}
+                >
+                  {value} <span aria-hidden="true">✕</span>
+                </button>
+              )),
+            )}
+          </div>
+        )}
         {shown.length === 0 && (
           <div className="job-result">
             <p className="mt-0">No jobs match your search.</p>

@@ -94,3 +94,13 @@ def test_public_job_shows_approved_jd_only(client, engine) -> None:  # type: ign
     # A job still being set up is not reachable, and looks like any missing job.
     assert client.get(f"/api/v1/public/open-roles/{draft_id}").status_code == 404
     assert client.get(f"/api/v1/public/open-roles/{uuid.uuid4()}").status_code == 404
+
+
+def test_public_skill_list_is_tidied() -> None:
+    from app.modules.applications.router import _clean_list
+
+    raw = [
+        "MLOps &amp", "DevOps", "Location: Mumbai", "Navi Mumbai",
+        "Employment Type: Full-Time", "AWS", "aws", "  Docker, ", "R&amp;D",
+    ]
+    assert _clean_list(raw, drop={"Navi Mumbai"}) == ["MLOps", "DevOps", "AWS", "Docker", "R&D"]

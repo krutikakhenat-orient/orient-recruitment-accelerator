@@ -7,7 +7,9 @@ extracted fields) require authentication and object-level campaign authorisation
 
 from __future__ import annotations
 
+import html
 import json
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
@@ -77,6 +79,37 @@ def get_open_role(
     raise NotFoundError("This job is not open for applications.")
 
 
+# Lines the JD reader sometimes puts into a skills list that are really field labels.
+_LABEL_RE = re.compile(
+    r"^\s*(location|job location|work location|employment type|job type|work mode|"
+    r"experience|salary|ctc|department|designation|qualification|notice period|"
+    r"openings?|shift|reporting to)\s*[:\-]",
+    re.IGNORECASE,
+)
+
+
+def _clean_list(items: list[str] | None, *, drop: set[str] | None = None) -> list[str]:
+    """Tidy JD list items for the public page only (stored data is unchanged): decode HTML
+    entities, drop "Label: value" lines and things that are really the job's location,
+    trim stray punctuation, and remove duplicates."""
+    drop_lower = {d.strip().lower() for d in (drop or set()) if d}
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in items or []:
+        text = html.unescape(html.unescape(str(raw)))
+        # A dangling entity fragment ("MLOps &amp" cut mid-way) and stray separators.
+        text = re.sub(r"&[a-z]{2,6};?$", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s+", " ", text).strip(" \t,;:/&|-•·")
+        if not text or len(text) > 80 or _LABEL_RE.match(text):
+            continue
+        key = text.lower()
+        if key in seen or key in drop_lower:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
 def _public_role(db: Session, c) -> PublicRoleRead:  # type: ignore[no-untyped-def]
     """Candidate-facing fields only. JD content comes from the APPROVED version, never a
     draft, and excludes the extraction draft, screening rules and every internal field."""
@@ -85,18 +118,23 @@ def _public_role(db: Session, c) -> PublicRoleRead:  # type: ignore[no-untyped-d
     jd = db.get(JDVersion, c.approved_jd_version_id) if c.approved_jd_version_id else None
     if jd is not None and (jd.organisation_id != c.organisation_id or jd.status != "approved"):
         jd = None
+    location = c.work_location or (jd.location if jd else None)
+    # Place names that slipped into the skills list ("Navi Mumbai") are not skills.
+    places = {p for p in re.split(r"[/,()]", location or "") if p.strip()}
+    must = _clean_list(jd.mandatory_skills if jd else [], drop=places)
+    nice = _clean_list(jd.desirable_skills if jd else [], drop=places | set(must))
     return PublicRoleRead(
         id=c.id,
         title=c.position_title,
-        location=c.work_location or (jd.location if jd else None),
+        location=location,
         employment_type=c.employment_type or (jd.employment_type if jd else None),
         work_mode=c.work_mode or (jd.work_mode if jd else None),
         department=jd.department if jd else None,
         number_of_openings=c.number_of_openings,
         minimum_experience_years=jd.minimum_total_experience_years if jd else None,
-        responsibilities=list(jd.responsibilities or []) if jd else [],
-        must_have_skills=list(jd.mandatory_skills or []) if jd else [],
-        nice_to_have_skills=list(jd.desirable_skills or []) if jd else [],
+        responsibilities=_clean_list(jd.responsibilities if jd else []),
+        must_have_skills=must,
+        nice_to_have_skills=nice,
         posted_at=(jd.approved_at if jd else None) or c.created_at,
     )
 
