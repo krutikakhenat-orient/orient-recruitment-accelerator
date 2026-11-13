@@ -1033,3 +1033,4 @@ table.report td.num { text-align: right; font-variant-numeric: tabular-nums; whi
 .section-nav a:hover, .section-nav a:focus-visible { border-color: var(--primary); }
 .cand-section { scroll-margin-top: 56px; margin-bottom: 8px; }
 .cand-section__title { font-size: 1.1rem; margin: 18px 0 8px; }
+.journey__action:not(:empty) { margin-top: 8px; }

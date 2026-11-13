@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { getJourney } from "../api/automation";
+import { getJourney, type JourneyStage } from "../api/automation";
 import { ApiError } from "../api/client";
 import {
   downloadResume,
@@ -319,7 +319,13 @@ export function CandidateSummaryPage(): ReactNode {
             <NextAction next={next} />
           </div>
           {journey.isLoading && <Loading label="Loading journey…" />}
-          {journey.data && <JourneyTracker journey={journey.data} />}
+          {journey.data && (
+            <JourneyTracker
+              journey={journey.data}
+              hideNextStep
+              actionFor={(s) => <StepAction stage={s} state={app.data.state} />}
+            />
+          )}
         </Card>
       </section>
 
@@ -511,6 +517,53 @@ export function CandidateSummaryPage(): ReactNode {
 
 // States in which an AI voice interview can be offered (same list as before).
 const AI_OFFERABLE = new Set(["screened", "manual_review", "interview_recommended", "interview_scheduled"]);
+
+/* A button on one journey step, so HR can go straight to where that step is completed.
+   Only steps that are open (now / needs attention, or an optional step not yet used) get a
+   button; finished and later steps do not. Who may act is still checked on the target. */
+function StepAction({ stage, state }: { stage: JourneyStage; state: string }): ReactNode {
+  const open = stage.status === "current" || stage.status === "blocked";
+  const here = (section: string, label: string): ReactNode => (
+    <a className="btn btn--accent btn--sm" href={`#${section}`}>
+      {label} →
+    </a>
+  );
+  const page = (to: string, label: string): ReactNode => (
+    <Link className="btn btn--accent btn--sm" to={to}>
+      {label} →
+    </Link>
+  );
+  switch (stage.key) {
+    case "resume_checked":
+    case "screened":
+      return open ? here("score", "Check score & resume details") : null;
+    case "hr_review":
+      if (!open) return null;
+      return state === "manual_review"
+        ? page("/reviews", "Open in Review inbox")
+        : here("interviews", "Invite to an interview");
+    case "pre_screening":
+      if (open) return here("interviews", "Open AI interview");
+      return (stage.status === "upcoming" || stage.status === "skipped") && AI_OFFERABLE.has(state)
+        ? here("interviews", stage.status === "upcoming" ? "Approve AI interview questions" : "Offer an AI interview")
+        : null;
+    case "interview_invited":
+      return open || stage.status === "upcoming" ? here("interviews", "Invite to panel interview") : null;
+    case "interview_confirmed":
+      return open ? here("interviews", "Copy / resend confirmation link") : null;
+    case "interview_done":
+      return open ? page("/assessments", "Open My interviews (check in & assess)") : null;
+    case "decision":
+      return open ? here("decision", "Record the decision") : null;
+    case "offer":
+      return open ? page("/offers", "Prepare the offer") : null;
+    case "documents":
+    case "joining":
+      return open ? page("/offers", "Open joining") : null;
+    default:
+      return null;
+  }
+}
 
 /* The button for the next step: a section of this page, another page, or nothing. */
 function NextAction({ next }: { next: NextStep }): ReactNode {
