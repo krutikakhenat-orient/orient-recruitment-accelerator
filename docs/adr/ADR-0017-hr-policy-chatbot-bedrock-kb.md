@@ -22,9 +22,11 @@ Orient_Internal_AI, ap-south-1, and idle cost matters.
    the relevance threshold (default 0.65), a re-check of every passage against the policy row
    (organisation, audience, still searchable), and "no valid citation, no answer".
 3. **Generation:** Bedrock Converse with a fixed system prompt, **no tools**, temperature 0,
-   passages as escaped, numbered data. Default model profile
-   `in.anthropic.claude-haiku-4-5-20251001-v1:0` (India-only routing). Configurable via
-   `ORA_HR_CHATBOT_MODEL_ID`.
+   passages as escaped, numbered data. Default model **`openai.gpt-oss-20b-1:0`**, on demand in
+   ap-south-1 (no cross-region routing; user choice 2026-11-13). Verified to answer with
+   citations, ignore injected instructions and return nothing when the passages do not cover
+   the question. Alternative: `in.anthropic.claude-haiku-4-5-20251001-v1:0` (India-only
+   profile, also verified). Configurable via `ORA_HR_CHATBOT_MODEL_ID`.
 4. **Guardrail:** Bedrock Guardrail (PII anonymise, content filters, prompt attack) applied to
    the question (`ApplyGuardrail` and `guardContent`) and to the output. **Not** to the quoted
    passages: one hostile document would otherwise block every answer (Phase 0 finding).
@@ -44,8 +46,11 @@ Orient_Internal_AI, ap-south-1, and idle cost matters.
   Possible later if S3 Vectors limits bite.
 - **RetrieveAndGenerate:** less code, but the backend could not enforce the threshold,
   audience re-check and citation rule itself. Kept for experiments only.
-- **Nova Lite via `apac.*` profile:** cheaper per token, but routes outside India. Rejected
-  while data residency is undecided (requirements.md open question 3).
+- **Nova Lite via `apac.*` profile:** routes outside India. Rejected while data residency is
+  undecided (requirements.md open question 3).
+- **Claude Haiku 4.5 (`in.*` profile):** strong answers, India-only routing (ap-south-1 and
+  ap-south-2); kept as the fallback choice if gpt-oss-20b answer quality is not enough on
+  real policies.
 - **Keyword only:** no AI risk or cost, but poor recall on paraphrased questions. Kept as the
   default and fallback.
 

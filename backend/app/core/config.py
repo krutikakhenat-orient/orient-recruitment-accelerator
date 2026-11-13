@@ -129,7 +129,9 @@ class Settings(BaseSettings):
     # KB data source). When unset, policy files use the default object store.
     kb_docs_bucket: str | None = None
     kb_region: str = "ap-south-1"
-    hr_chatbot_model_id: str | None = None
+    # Generation model for Bedrock Converse. Default: gpt-oss-20b, on demand in ap-south-1
+    # (stays in Mumbai; verified to answer with citations and ignore injected instructions).
+    hr_chatbot_model_id: str | None = "openai.gpt-oss-20b-1:0"
     guardrail_id: str | None = None
     guardrail_version: str = "DRAFT"
     # Minimum Bedrock retrieval score (0..1) for a passage to be used in an answer. Phase 0
