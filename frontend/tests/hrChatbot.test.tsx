@@ -144,6 +144,17 @@ describe("ChatPanel", () => {
     expect(await screen.findByText(/sent to hr/i)).toBeInTheDocument();
   });
 
+  it("replies to a greeting plainly, without a Send to HR prompt", async () => {
+    m.askAssistant!.mockResolvedValue({ ...NOT_FOUND, outcome: "greeting", route_to_hr: false,
+      answer: "Hello! I answer questions from the company's approved HR policies." });
+    wrap(<ChatPanel />);
+    await ask("hi");
+    // Shown in the answer and announced once in the live region.
+    expect((await screen.findAllByText(/Hello! I answer questions/)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /send to hr/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/was this helpful/i)).not.toBeInTheDocument();
+  });
+
   it("shows the smart-search-unavailable banner on a keyword fallback", async () => {
     m.askAssistant!.mockResolvedValue({ ...ANSWERED, answered_via: "keyword", smart_search_unavailable: true });
     wrap(<ChatPanel />);

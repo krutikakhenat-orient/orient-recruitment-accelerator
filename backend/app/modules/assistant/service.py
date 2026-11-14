@@ -31,6 +31,7 @@ from app.modules.assistant.guard import (
     QuestionGuard,
     is_self_service,
     scrub_pii,
+    small_talk_reply,
 )
 from app.modules.assistant.models import AssistantFeedback
 from app.modules.assistant.schemas import (
@@ -169,6 +170,15 @@ def ask(
             query_id=entry.id,
         )
 
+    greeting = small_talk_reply(q)
+    if greeting is not None:
+        entry = _log(db, organisation_id=org, question=q, answered=False, policy_id=None,
+                     via=None, retrieved=None, top_score=None, started=started,
+                     outcome="greeting")
+        return AskResponse(
+            answered=False, answer=greeting, sources=[], route_to_hr=False,
+            note=ASSISTANT_NOTE, outcome="greeting", answered_via=None, query_id=entry.id,
+        )
     if is_self_service(q):
         return reply(SELF_SERVICE_REPLY, outcome="self_service")
     if not guard.check(q).allowed:

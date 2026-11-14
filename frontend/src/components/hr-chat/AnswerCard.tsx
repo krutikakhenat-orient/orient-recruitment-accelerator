@@ -62,6 +62,14 @@ export function AnswerCard({
   answer: AskResponse;
   onSendToHr: () => void;
 }): ReactNode {
+  // A greeting/thanks reply is neither an answer nor a miss: plain, with no HR hand-off.
+  if (answer.outcome === "greeting") {
+    return (
+      <div className="assistant-answer">
+        <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{answer.answer}</p>
+      </div>
+    );
+  }
   return (
     <div className={`assistant-answer ${answer.answered ? "" : "assistant-answer--none"}`}>
       <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{answer.answer}</p>

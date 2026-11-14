@@ -42,6 +42,33 @@ def is_self_service(question: str) -> bool:
     return bool(_SELF_SERVICE.search(question))
 
 
+# Greetings and thanks: not policy questions, so no search and no model call. Reply kindly
+# instead of "not found" (users typing "hi" thought the chatbot was broken).
+_SMALL_TALK = re.compile(
+    r"^\s*(hi+|hello+|hey+|hiya|namaste|good\s+(morning|afternoon|evening)|"
+    r"thanks?|thank\s+you|thx|ok(ay)?|cool|great|bye|goodbye)"
+    r"(\s+(there|hr|team|bot|all))?\s*[!.?,:)]*\s*$",
+    re.IGNORECASE,
+)
+
+GREETING_REPLY = (
+    "Hello! I answer questions from the company's approved HR policies. Try asking, for "
+    "example, how many days of annual leave you get, what the working hours are, or what to "
+    "do in your first week."
+)
+THANKS_REPLY = "You're welcome. Ask me anything else about company HR policies."
+
+
+def small_talk_reply(question: str) -> str | None:
+    m = _SMALL_TALK.match(question)
+    if not m:
+        return None
+    word = m.group(1).lower()
+    if word.startswith(("thank", "thx", "ok", "cool", "great", "bye", "goodbye")):
+        return THANKS_REPLY
+    return GREETING_REPLY
+
+
 def scrub_pii(text: str) -> str:
     text = _EMAIL.sub("[email]", text)
     text = _PAN.sub("[id]", text)

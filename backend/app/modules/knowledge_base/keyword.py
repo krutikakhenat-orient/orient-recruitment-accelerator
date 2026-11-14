@@ -63,6 +63,7 @@ class KeywordKnowledgeBase:
     def put_document(
         self, metadata: PolicyMetadata, data: bytes, *, extension: str, content_type: str
     ) -> str:
+        # Marker only: nothing is uploaded. policies.service.is_stale_sync relies on this prefix.
         return f"keyword://{metadata.policy_id}/v{metadata.version}"
 
     def delete_document(self, key: str) -> None:

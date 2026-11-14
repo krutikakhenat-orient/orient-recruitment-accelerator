@@ -9,6 +9,11 @@
 from __future__ import annotations
 
 from app.core.config import get_settings
+
+# Register EVERY ORM model before any flush. The ops Lambda imports only this module, and
+# without the full registry SQLAlchemy cannot resolve policy_document -> organisation
+# (NoReferencedTableError; seen in UAT). The web app gets this via main.py.
+from app.db import models_registry  # noqa: F401
 from app.db.session import SessionLocal
 from app.modules.knowledge_base import service
 from app.modules.knowledge_base.factory import build_knowledge_base, policy_file_store

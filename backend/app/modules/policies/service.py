@@ -19,6 +19,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.modules.audit.schemas import AuditEventWrite
 from app.modules.audit.service import record_event
@@ -95,7 +96,23 @@ def to_read(
     item.has_file = bool(policy.source_key)
     item.acknowledged = acknowledged
     item.acknowledgement_count = ack_count
+    if is_stale_sync(policy):
+        item.index_status = IndexStatus.NOT_INDEXED.value
     return item
+
+
+KEYWORD_MARKER = "keyword://"
+
+
+def is_stale_sync(policy: PolicyDocument) -> bool:
+    """A version "synced" while the keyword backend was active has only a keyword:// marker,
+    no object in the knowledge base. Once the Bedrock knowledge base is switched on it must
+    show (and be treated) as not synced, never as "Synced" (seen in UAT)."""
+    return (
+        get_settings().bedrock_kb_active
+        and policy.status == PolicyStatus.APPROVED.value
+        and (policy.approved_key or "").startswith(KEYWORD_MARKER)
+    )
 
 
 def list_policies(
@@ -432,8 +449,9 @@ def index_status(db: Session, *, policy: PolicyDocument, kb: KnowledgeBase) -> I
     """Refresh running syncs for the organisation, then report this policy's status."""
     kb_service.poll(db, kb, policy.organisation_id)
     db.refresh(policy)
+    shown = IndexStatus.NOT_INDEXED.value if is_stale_sync(policy) else policy.index_status
     return IndexStatusRead(
-        policy_id=policy.id, status=policy.status, index_status=policy.index_status,
+        policy_id=policy.id, status=policy.status, index_status=shown,
         index_error=policy.index_error, indexed_at=policy.indexed_at,
         ingestion_job_id=policy.ingestion_job_id, backend=kb.name,
     )
