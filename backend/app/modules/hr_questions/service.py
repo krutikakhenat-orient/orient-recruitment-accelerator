@@ -130,7 +130,8 @@ def faq_draft(
 ) -> PolicyDocument:
     """Start an FAQ draft from the question. The asker is not named in the FAQ text."""
     text = scrub_pii(question.question)
-    body = f"Question: {text}\n\nAnswer: {question.answer or '(to be written by HR)'}"
+    body = (f"Question: {text}\n\n"
+            f"Answer: {question.answer or policy_service.FAQ_ANSWER_PLACEHOLDER}")
     return policy_service.create_policy(
         db, actor=actor, store=store, title=text[:255], kind="faq", department=None,
         body=body, effective_date=None,

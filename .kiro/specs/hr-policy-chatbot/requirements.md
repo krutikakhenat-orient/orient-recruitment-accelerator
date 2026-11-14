@@ -41,7 +41,9 @@ Knowledge Base is off or unavailable, the existing keyword assistant keeps worki
 **User story:** As HR leadership, I want only approved content searchable, so that employees never see drafts.
 
 1. THE Knowledge Base data source SHALL include only the `approved/` prefix.
-2. WHEN an HR Policy Manager approves a Policy Document, THE system SHALL copy the file to `approved/` with a metadata sidecar (policy id, version, title, audience, effective date) and start a Sync.
+2. WHEN an HR Policy Manager uploads or saves a Policy Document, THE system SHALL publish it in the same step (unless "Save as draft" is chosen), copy the file to `approved/` with a metadata sidecar (policy id, version, title, audience, effective date) and start a Sync. A draft is published later with one Publish action. (Changed 2026-11-14 at the product owner's request: one step instead of upload-then-approve.)
+2a. THE system SHALL show HR, for every published policy, whether it is synced to the chatbot (Synced / Syncing / Sync failed with the reason / Not synced), a summary of how many are synced, and a confirmation when a sync finishes.
+2b. THE system SHALL refuse to publish an FAQ draft whose answer is still the placeholder.
 3. THE system SHALL apply existing separation-of-duties rules to approval and SHALL write an audit event.
 4. WHEN a policy is revised, THE system SHALL create a new version, keep the old version searchable until the new version is Ready, then remove the old object and Sync.
 5. WHEN a policy is retired, THE system SHALL remove its object from `approved/` and Sync, and the policy SHALL stop appearing in answers.

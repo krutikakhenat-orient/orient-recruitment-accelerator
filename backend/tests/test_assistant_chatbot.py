@@ -44,10 +44,10 @@ def hr(client, engine):  # type: ignore[no-untyped-def]
 
 
 def _publish(client, hr, title, body):  # type: ignore[no-untyped-def]
-    pid = client.post("/api/v1/policies", headers=hr["admin"],
-                      json={"title": title, "body": body}).json()["id"]
-    assert client.post(f"/api/v1/policies/{pid}/approve", headers=hr["admin"]).status_code == 200
-    return pid
+    # Saving publishes and syncs at once (no separate approve step).
+    resp = client.post("/api/v1/policies", headers=hr["admin"], json={"title": title, "body": body})
+    assert resp.status_code == 201 and resp.json()["status"] == "approved", resp.text
+    return resp.json()["id"]
 
 
 def _ask(client, headers, question):  # type: ignore[no-untyped-def]
@@ -292,6 +292,31 @@ def test_generic_words_do_not_produce_an_unrelated_answer(client, hr) -> None:  
     assert leave["answered"] is True and leave["sources"][0]["title"] == "SYNTHETIC Leave policy"
 
 
+def test_title_only_match_is_not_answered_with_unrelated_text(client, hr) -> None:  # type: ignore[no-untyped-def]
+    # Reproduces UAT: "What is the dress code?" matched the title "Code of conduct" and replied
+    # with the policy's first sentence ("SYNTHETIC SAMPLE.").
+    _publish(client, hr, "SYNTHETIC Code of conduct",
+             "SYNTHETIC SAMPLE. Treat colleagues and candidates with respect.")
+    body = _ask(client, hr["employee"], "What is the dress code?").json()
+    assert body["answered"] is False and body["outcome"] == "not_found"
+    assert "SYNTHETIC SAMPLE" not in body["answer"]
+    respect = _ask(client, hr["employee"], "How should I treat colleagues?").json()
+    assert respect["answered"] is True and "respect" in respect["answer"]
+
+
+def test_faq_without_an_answer_cannot_be_approved(client, hr) -> None:  # type: ignore[no-untyped-def]
+    # Reproduces UAT: FAQ drafts created from a question were approved with the placeholder.
+    _ask(client, hr["employee"], "Is there a pet policy?")
+    qid = client.get("/api/v1/assistant/unanswered", headers=hr["admin"]).json()[0]["id"]
+    draft = client.post(f"/api/v1/assistant/unanswered/{qid}/faq-draft", headers=hr["admin"]).json()
+    refused = client.post(f"/api/v1/policies/{draft['id']}/approve", headers=hr["admin"])
+    assert refused.status_code == 422 and "no answer yet" in refused.json()["error"]["message"]
+    client.put(f"/api/v1/policies/{draft['id']}", headers=hr["admin"],
+               json={"body": "Question: Is there a pet policy?\n\nAnswer: SYNTHETIC: No pets."})
+    approved = client.post(f"/api/v1/policies/{draft['id']}/approve", headers=hr["admin"])
+    assert approved.status_code == 200 and approved.json()["status"] == "approved"
+
+
 def test_faq_draft_from_unanswered_question(client, hr) -> None:  # type: ignore[no-untyped-def]
     _ask(client, hr["employee"], "Is there a pet policy?")
     unanswered = client.get("/api/v1/assistant/unanswered", headers=hr["admin"]).json()
@@ -306,10 +331,9 @@ def test_faq_draft_from_unanswered_question(client, hr) -> None:  # type: ignore
 
 
 def test_insights_are_aggregates_only(client, hr) -> None:  # type: ignore[no-untyped-def]
-    pid = client.post("/api/v1/policies", headers=hr["admin"], json={
+    client.post("/api/v1/policies", headers=hr["admin"], json={
         "title": "SYNTHETIC Annual leave", "body": LEAVE, "review_due_date": "2020-01-01",
-    }).json()["id"]
-    client.post(f"/api/v1/policies/{pid}/approve", headers=hr["admin"])
+    })
     for q in ("How many days of annual leave?", "How many days of annual leave?",
               "Is there a pet policy?", "What is my leave balance?"):
         _ask(client, hr["employee"], q)

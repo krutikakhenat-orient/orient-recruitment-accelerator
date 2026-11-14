@@ -180,7 +180,7 @@ describe("ChatPanel", () => {
 });
 
 describe("Policies page", () => {
-  it("shows index status as text with the failure reason and a Reindex action", async () => {
+  it("shows clearly what is synced, with the failure reason and a retry", async () => {
     permissions.current = new Set(["campaign.approve"]);
     m.listPolicies!.mockResolvedValue([
       policy({ id: "p1", title: "SYNTHETIC Leave", index_status: "ready" }),
@@ -191,12 +191,20 @@ describe("Policies page", () => {
     m.reindexPolicy!.mockResolvedValue(policy({ id: "p2", index_status: "indexing" }));
     const { container } = wrap(<PoliciesPage />);
 
-    expect(await screen.findByText("Ready for chatbot")).toBeInTheDocument();
-    expect(screen.getByText("Index failed")).toBeInTheDocument();
+    expect(await screen.findByText("Synced to chatbot")).toBeInTheDocument();
+    expect(screen.getByText("Sync failed")).toBeInTheDocument();
     expect(screen.getByText(/1 file\(s\) could not be indexed/)).toBeInTheDocument();
+    // One summary line tells HR the overall state.
+    const summary = container.querySelector(".sync-summary");
+    expect(summary).toHaveTextContent(/1 of 2 published policies are synced to the chatbot/);
+    expect(summary).toHaveTextContent(/1 needs a sync/);
+    // Plain status words; a draft shows no sync badge.
+    expect(screen.getAllByText("Published")).toHaveLength(2);
+    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Upload file" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "HR inbox" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Reindex" }));
+    await userEvent.click(screen.getByRole("button", { name: "Retry sync" }));
     await waitFor(() => expect(m.reindexPolicy).toHaveBeenCalledWith("p2"));
     await expectNoAxeViolations(container);
   });
@@ -207,7 +215,7 @@ describe("Policies page", () => {
     expect(await screen.findByLabelText("Your question")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Upload file" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "HR inbox" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Ready for chatbot")).not.toBeInTheDocument();
+    expect(screen.queryByText("Synced to chatbot")).not.toBeInTheDocument();
   });
 });
 
@@ -235,8 +243,23 @@ describe("UploadPolicyDialog", () => {
     await userEvent.upload(input, new File(["MZ"], "tool.exe", { type: "application/octet-stream" }),
       { applyAccept: false });
     expect(await screen.findByRole("alert")).toHaveTextContent(/only pdf, docx, txt and md/i);
-    expect(screen.getByRole("button", { name: /upload as draft/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
     expect(m.uploadPolicy).not.toHaveBeenCalled();
+  });
+
+  it("publishes by default; Save as draft is opt-in", async () => {
+    m.uploadPolicy!.mockResolvedValue(policy({}));
+    wrap(<UploadPolicyDialog onClose={vi.fn()} onDone={vi.fn()} />);
+    await userEvent.upload(screen.getByLabelText("File"),
+      new File(["SYNTHETIC leave text"], "leave.txt", { type: "text/plain" }));
+    await userEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await waitFor(() => expect(m.uploadPolicy).toHaveBeenCalledTimes(1));
+    expect(m.uploadPolicy!.mock.calls[0]![0]).toMatchObject({ publish: true });
+
+    await userEvent.click(screen.getByLabelText(/save as draft/i));
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(m.uploadPolicy).toHaveBeenCalledTimes(2));
+    expect(m.uploadPolicy!.mock.calls[1]![0]).toMatchObject({ publish: false });
   });
 
   it("warns about a duplicate and uploads only after confirmation", async () => {
@@ -251,7 +274,7 @@ describe("UploadPolicyDialog", () => {
     await userEvent.upload(screen.getByLabelText("File"),
       new File(["SYNTHETIC leave text"], "leave.txt", { type: "text/plain" }));
     expect(screen.getByLabelText("Title")).toHaveValue("leave");
-    await userEvent.click(screen.getByRole("button", { name: /upload as draft/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Publish" }));
 
     expect(await screen.findByText(/already been uploaded as: SYNTHETIC Leave/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /upload anyway/i }));

@@ -45,8 +45,9 @@ def hr(client, engine, kb, store):  # type: ignore[no-untyped-def]
 
 
 def _create(client, hr, title, body, **extra):  # type: ignore[no-untyped-def]
+    # These tests drive the draft -> publish steps one at a time ("Save as draft").
     resp = client.post("/api/v1/policies", headers=hr["admin"],
-                       json={"title": title, "body": body, **extra})
+                       json={"title": title, "body": body, "publish": False, **extra})
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 

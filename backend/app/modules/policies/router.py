@@ -68,14 +68,17 @@ def create_policy(
     payload: PolicyCreate,
     db: Session = Depends(get_db),
     store: ObjectStore = Depends(get_policy_file_store),
+    kb: KnowledgeBase = Depends(get_knowledge_base),
     actor: AuthenticatedActor = Depends(get_current_actor),
 ) -> PolicyRead:
-    """Type in a policy, SOP or FAQ as a draft. Requires campaign.approve."""
+    """Type in a policy, SOP or FAQ. Published and synced at once unless publish=false
+    (draft). Requires campaign.approve."""
     require_permission(actor, Permission.CAMPAIGN_APPROVE)
     policy = service.create_policy(
         db, actor=actor, store=store, title=payload.title, kind=payload.kind,
         department=payload.department, body=payload.body, effective_date=payload.effective_date,
         audience=payload.audience, review_due_date=payload.review_due_date,
+        publish_with=kb if payload.publish else None,
     )
     return service.read_policy(db, actor, policy)
 
@@ -90,13 +93,16 @@ async def upload_policy(
     effective_date: dt.date | None = Form(default=None),
     review_due_date: dt.date | None = Form(default=None),
     confirm_duplicate: bool = Form(default=False),
+    publish: bool = Form(default=True),
     db: Session = Depends(get_db),
     settings: Settings = Depends(settings_dep),
     store: ObjectStore = Depends(get_policy_file_store),
     scanner: MalwareScanner = Depends(get_malware_scanner),
+    kb: KnowledgeBase = Depends(get_knowledge_base),
     actor: AuthenticatedActor = Depends(get_current_actor),
 ) -> PolicyRead:
-    """Upload a PDF, DOCX, TXT or MD file as a draft. Requires campaign.approve."""
+    """Upload a PDF, DOCX, TXT or MD file. Published and synced at once unless publish=false
+    (draft). Requires campaign.approve."""
     require_permission(actor, Permission.CAMPAIGN_APPROVE)
     data = await _read_capped(file, settings.upload_max_bytes)
     policy = service.upload_policy(
@@ -105,6 +111,7 @@ async def upload_policy(
         max_bytes=settings.upload_max_bytes, title=title, kind=kind, department=department,
         audience=parse_audience_field(audience), effective_date=effective_date,
         review_due_date=review_due_date, confirm_duplicate=confirm_duplicate,
+        publish_with=kb if publish else None,
     )
     return service.read_policy(db, actor, policy)
 

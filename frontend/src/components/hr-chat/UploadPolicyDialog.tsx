@@ -33,6 +33,7 @@ export function UploadPolicyDialog({
   const [kind, setKind] = useState<PolicyKind>("policy");
   const [audience, setAudience] = useState<string[]>([]);
   const [reviewDue, setReviewDue] = useState("");
+  const [asDraft, setAsDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<string[] | null>(null);
 
@@ -43,6 +44,7 @@ export function UploadPolicyDialog({
       return uploadPolicy({
         file, title: title.trim(), kind, audience,
         ...(reviewDue ? { reviewDueDate: reviewDue } : {}), confirmDuplicate,
+        publish: !asDraft,
       });
     },
     onSuccess: onDone,
@@ -91,15 +93,18 @@ export function UploadPolicyDialog({
             </Button>
           ) : (
             <Button variant="primary" disabled={!ready} onClick={() => send.mutate(false)}>
-              {send.isPending ? "Checking the file…" : replacing ? "Replace file" : "Upload as draft"}
+              {send.isPending
+                ? "Checking the file…"
+                : replacing ? "Replace file" : asDraft ? "Save draft" : "Publish"}
             </Button>
           )}
         </>
       }
     >
       <p className="hint-line">
-        The file is checked for safety first. It becomes a draft: nobody sees it and the chatbot
-        does not use it until you approve it.
+        {replacing
+          ? "The new file is checked for safety, then replaces the draft's file."
+          : "The file is checked for safety, then published and synced to the chatbot straight away."}
       </p>
       {error && <ErrorNote>{error}</ErrorNote>}
       {duplicates && (
@@ -131,6 +136,15 @@ export function UploadPolicyDialog({
             <input id={`${base}-review`} type="date" value={reviewDue}
               onChange={(e) => setReviewDue(e.target.value)} />
           </Field>
+          <label className="check-row" htmlFor={`${base}-draft`}>
+            <input id={`${base}-draft`} type="checkbox" checked={asDraft}
+              onChange={(e) => setAsDraft(e.target.checked)} />
+            <span>
+              <strong>Save as draft</strong>
+              <span className="hint"> Not ready yet: nobody sees it and the chatbot does not use it
+                until you publish it.</span>
+            </span>
+          </label>
         </>
       )}
     </Modal>

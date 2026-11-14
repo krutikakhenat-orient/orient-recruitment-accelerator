@@ -353,7 +353,7 @@ def test_joining_case_checks_and_messages(client, engine, world) -> None:
 def test_policy_library_and_assistant_answer_only_from_approved_text(client, world) -> None:
     created = client.post(
         "/api/v1/policies", headers=world["admin"],
-        json={"title": "Leave policy",
+        json={"title": "Leave policy", "publish": False,  # draft first, publish below
               "body": "Employees receive 20 days of paid annual leave each year. "
                       "Unused leave can be carried forward up to 5 days."},
     )

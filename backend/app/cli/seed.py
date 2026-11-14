@@ -25,7 +25,7 @@ from app.modules.identity.models import Role, User, UserRole
 from app.modules.identity.permissions import DEFAULT_ROLE_PERMISSIONS, RoleName
 from app.modules.induction.service import seed_developer_video
 from app.modules.organisations.repository import get_or_create_organisation
-from app.modules.policies.models import PolicyDocument, PolicyStatus
+from app.modules.policies.models import IndexStatus, PolicyDocument, PolicyStatus
 
 # Synthetic local-dev password. Clearly non-production; replace in any real environment.
 SYNTHETIC_DEV_PASSWORD = "SyntheticDevPassword123"  # noqa: S105
@@ -135,6 +135,11 @@ _SAMPLE_POLICIES: tuple[tuple[str, str, str | None, str], ...] = (
 
 
 def _seed_sample_policies(db: Session, organisation_id: uuid.UUID) -> None:
+    # Keyword search reads approved rows directly, so seeded samples are already "synced".
+    # With the Bedrock knowledge base on they start "not synced" and the nightly reconcile
+    # copies them into the knowledge base (never claim a sync that has not happened).
+    synced = not get_settings().bedrock_kb_active
+    status = IndexStatus.READY.value if synced else IndexStatus.NOT_INDEXED.value
     for title, kind, department, body in _SAMPLE_POLICIES:
         exists = (
             db.query(PolicyDocument)
@@ -148,7 +153,7 @@ def _seed_sample_policies(db: Session, organisation_id: uuid.UUID) -> None:
             PolicyDocument(
                 organisation_id=organisation_id, family_id=uuid.uuid4(), title=title,
                 kind=kind, department=department, body=body, version=1,
-                status=PolicyStatus.APPROVED.value,
+                status=PolicyStatus.APPROVED.value, index_status=status,
             )
         )
     db.flush()

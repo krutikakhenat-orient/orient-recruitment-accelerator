@@ -271,7 +271,7 @@ def faq_draft_from_unanswered(
         raise NotFoundError("Question not found")
     return policy_service.create_policy(
         db, actor=actor, store=store, title=entry.question[:255], kind="faq", department=None,
-        body=f"Question: {entry.question}\n\nAnswer: (to be written by HR)",
+        body=f"Question: {entry.question}\n\nAnswer: {policy_service.FAQ_ANSWER_PLACEHOLDER}",
         effective_date=None,
     )
 

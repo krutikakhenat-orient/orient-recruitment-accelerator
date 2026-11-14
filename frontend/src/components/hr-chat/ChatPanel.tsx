@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { askAssistant, type AskResponse } from "../../api/automation";
 import { ApiError } from "../../api/client";
@@ -21,7 +21,17 @@ export const CHAT_NOTICE =
 /* HR policy chat. Recent turns live in this component's memory only: nothing is written to
    browser storage and the server keeps no conversation (Req 4.8). New answers are announced
    through an aria-live region and focus returns to the question box (Req 10.2). */
-export function ChatPanel({ compact = false }: { compact?: boolean }): ReactNode {
+export function ChatPanel({
+  compact = false,
+  suggestions = [],
+  initialQuestion,
+}: {
+  compact?: boolean;
+  /* Example questions shown as one-click chips before the first question. */
+  suggestions?: string[];
+  /* Asked once on mount (e.g. from the employee home question box). */
+  initialQuestion?: string;
+}): ReactNode {
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +62,21 @@ export function ChatPanel({ compact = false }: { compact?: boolean }): ReactNode
     const q = question.trim();
     if (q.length >= 2 && !ask.isPending) ask.mutate(q);
   };
+  const askedInitial = useRef(false);
+  useEffect(() => {
+    const q = initialQuestion?.trim();
+    if (!q || q.length < 2 || askedInitial.current) return;
+    // Defer by a tick and cancel on cleanup: React StrictMode mounts twice in development,
+    // and a request started during the first mount reported to a discarded observer, which
+    // left the "Looking…" spinner on forever. Only the surviving mount sends the question.
+    const timer = window.setTimeout(() => {
+      askedInitial.current = true;
+      ask.mutate(q.slice(0, 300));
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // ask.mutate is stable for the component's lifetime; run once per initial question.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuestion]);
   const latest = turns.at(-1);
   return (
     <div className={`hr-chat ${compact ? "hr-chat--compact" : ""}`}>
@@ -64,9 +89,21 @@ export function ChatPanel({ compact = false }: { compact?: boolean }): ReactNode
       )}
       <div className="hr-chat__log">
         {turns.length === 0 && !ask.isPending && (
-          <p className="doc-row__meta">
-            Ask about leave, working hours, travel and other company policies.
-          </p>
+          <div className="hr-chat__empty">
+            <p className="doc-row__meta" style={{ margin: 0 }}>
+              Ask about leave, working hours, travel and other company policies.
+            </p>
+            {suggestions.length > 0 && (
+              <div className="hr-chat__suggestions" role="group" aria-label="Example questions">
+                {suggestions.map((s) => (
+                  <button key={s} type="button" className="suggestion-chip"
+                    onClick={() => ask.mutate(s)} disabled={ask.isPending}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {turns.map((t, i) => (
           <div key={i} className="hr-chat__turn">

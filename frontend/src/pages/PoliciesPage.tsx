@@ -30,7 +30,6 @@ import { MyHrQuestions } from "../components/hr-chat/MyHrQuestions";
 import { UploadPolicyDialog } from "../components/hr-chat/UploadPolicyDialog";
 import { useToast } from "../components/toast";
 import {
-  Banner,
   Button,
   Card,
   Empty,
@@ -138,10 +137,11 @@ function PolicyForm({
 }: {
   existing?: Policy;
   onClose: () => void;
-  onDone: () => void;
+  onDone: (saved: Policy) => void;
 }): ReactNode {
   const base = useId();
   const uploaded = !!existing?.source_filename;
+  const [asDraft, setAsDraft] = useState(false);
   const [title, setTitle] = useState(existing?.title ?? "");
   const [kind, setKind] = useState<PolicyKind>((existing?.kind as PolicyKind) ?? "policy");
   const [department, setDepartment] = useState(existing?.department ?? "");
@@ -159,13 +159,14 @@ function PolicyForm({
             ...(uploaded ? {} : { body }),
           })
         : createPolicy({
-            title, kind, body, audience,
+            title, kind, body, audience, publish: !asDraft,
             ...(department.trim() ? { department: department.trim() } : {}),
             ...(reviewDue ? { review_due_date: reviewDue } : {}),
           }),
     onSuccess: onDone,
     onError: (e) => setError(e instanceof ApiError ? e.message : "Could not save."),
   });
+  const label = existing ? "Save changes" : asDraft ? "Save draft" : "Publish";
   return (
     <Modal
       title={existing ? "Edit draft" : "Write a policy, guide or FAQ"}
@@ -174,12 +175,16 @@ function PolicyForm({
         <>
           <Button onClick={onClose}>Cancel</Button>
           <Button variant="primary" disabled={!title.trim() || !body.trim() || save.isPending} onClick={() => save.mutate()}>
-            {save.isPending ? "Saving…" : "Save draft"}
+            {save.isPending ? "Saving…" : label}
           </Button>
         </>
       }
     >
-      <p className="hint-line">A draft is not visible to employees and is not used by the chatbot until you approve it.</p>
+      <p className="hint-line">
+        {existing
+          ? "This is a draft. Save your changes, then click Publish in the library."
+          : "Publishing makes it visible to the people it is for and syncs it to the chatbot straight away."}
+      </p>
       {error && <ErrorNote>{error}</ErrorNote>}
       <Field label="Title" htmlFor={`${base}-title`}>
         <input id={`${base}-title`} value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -208,25 +213,57 @@ function PolicyForm({
         <textarea id={`${base}-body`} rows={8} value={body} readOnly={uploaded}
           onChange={(e) => setBody(e.target.value)} />
       </Field>
+      {!existing && (
+        <label className="check-row" htmlFor={`${base}-draft`}>
+          <input id={`${base}-draft`} type="checkbox" checked={asDraft}
+            onChange={(e) => setAsDraft(e.target.checked)} />
+          <span>
+            <strong>Save as draft</strong>
+            <span className="hint"> Not ready yet: nobody sees it and the chatbot does not use it
+              until you publish it.</span>
+          </span>
+        </label>
+      )}
     </Modal>
   );
 }
 
-/* While a version is Indexing, check its status every 10 seconds and refresh the list once
-   it settles. */
-function IndexWatcher({ policyId }: { policyId: string }): null {
+/* While a version is syncing, check every 10 seconds. When it settles, tell HR clearly
+   (toast) whether the chatbot can now answer from it, and refresh the list. */
+function IndexWatcher({ policyId, title }: { policyId: string; title: string }): null {
   const qc = useQueryClient();
+  const toast = useToast();
   const status = useQuery({
     queryKey: ["index-status", policyId],
     queryFn: () => getIndexStatus(policyId),
-    refetchInterval: 10_000,
+    refetchInterval: (q) => (q.state.data && q.state.data.index_status !== "indexing" ? false : 10_000),
   });
-  const settled = status.data && status.data.index_status !== "indexing";
+  const settled = status.data?.index_status;
   useEffect(() => {
-    if (settled) void qc.invalidateQueries({ queryKey: ["policies"] });
-  }, [settled, qc]);
+    if (!settled || settled === "indexing") return;
+    if (settled === "ready") {
+      toast.push(`"${title}" is synced`, { tone: "ok", message: "The chatbot can answer from it now." });
+    } else if (settled === "failed") {
+      toast.push(`"${title}" did not sync`, { tone: "danger", message: "Open the library to see why and retry." });
+    }
+    void qc.invalidateQueries({ queryKey: ["policies"] });
+  }, [settled, title, qc, toast]);
   return null;
 }
+
+/* What HR sees right after publishing. */
+export function publishedMessage(p: Policy): { title: string; message: string; tone: "ok" | "danger" | "info" } {
+  if (p.status === "draft") return { title: "Draft saved", message: "Publish it when it is ready.", tone: "info" };
+  if (p.index_status === "ready") {
+    return { title: "Published and synced", message: "The chatbot can answer from it now.", tone: "ok" };
+  }
+  if (p.index_status === "failed") {
+    return { title: "Published, but the sync failed", message: p.index_error ?? "Retry the sync from the library.", tone: "danger" };
+  }
+  return { title: "Published. Syncing to the chatbot…", message: "You will see a confirmation when it is ready.", tone: "info" };
+}
+
+const STATUS_LABEL: Record<string, string> = { draft: "Draft", approved: "Published", retired: "Retired" };
 
 async function openOriginal(policyId: string): Promise<void> {
   const link = await getOriginalLink(policyId);
@@ -256,31 +293,50 @@ function ManageLibrary(): ReactNode {
   };
   const act = useMutation({
     mutationFn: (run: () => Promise<unknown>) => run(),
-    onSuccess: () => {
+    onSuccess: (result) => {
       setError(null);
       refresh();
+      if (result && typeof result === "object" && "index_status" in result) {
+        const m = publishedMessage(result as Policy);
+        toast.push(m.title, { tone: m.tone, message: m.message });
+      }
     },
     onError: (e) => setError(e instanceof Error ? e.message : "Could not do that."),
   });
+  const published = (policies.data ?? []).filter((p) => p.status === "approved");
+  const synced = published.filter((p) => p.index_status === "ready").length;
+  const needsAction = published.filter((p) => p.index_status === "failed" || p.index_status === "not_indexed");
   return (
     <>
-      <Banner>
-        <strong>How the library works:</strong> upload a file or write a draft, then approve it
-        to publish it. Approved versions are sent to the chatbot's index; the badge shows when the
-        chatbot can use them. Use "Revise" for a new version: the old one keeps answering
-        questions until the new one is ready.
-      </Banner>
       {error && <ErrorNote>{error}</ErrorNote>}
       <Card
         title="Library"
-        description="Every policy, guide and FAQ, including drafts and older versions."
+        description="Upload or write a policy and it is published and synced to the chatbot in one step. Revise keeps the old version answering until the new one is synced."
         actions={
           <div className="btn-row">
             <Button variant="primary" small onClick={() => setUpload({})}>Upload file</Button>
-            <Button small onClick={() => setForm({})}>Write a draft</Button>
+            <Button small onClick={() => setForm({})}>Write one</Button>
           </div>
         }
       >
+        {policies.data && published.length > 0 && (
+          <p className={`sync-summary ${needsAction.length ? "sync-summary--warn" : "sync-summary--ok"}`} role="status">
+            <strong>{synced} of {published.length}</strong> published{" "}
+            {published.length === 1 ? "policy is" : "policies are"} synced to the chatbot
+            {needsAction.length > 0 && (
+              <>
+                {". "}
+                {needsAction.length} need{needsAction.length === 1 ? "s" : ""} a sync.{" "}
+                <Button small variant="primary" disabled={act.isPending}
+                  onClick={() => act.mutate(async () => {
+                    for (const p of needsAction) await reindexPolicy(p.id);
+                  })}>
+                  Sync all now
+                </Button>
+              </>
+            )}
+          </p>
+        )}
         {policies.isLoading && <Loading />}
         {policies.isError && <ErrorNote>The library could not be loaded. Please try again.</ErrorNote>}
         {policies.data && policies.data.length === 0 && <Empty>Nothing here yet. Add the first policy.</Empty>}
@@ -288,8 +344,9 @@ function ManageLibrary(): ReactNode {
           <div key={p.id} className="doc-row">
             <div>
               <div className="doc-row__name">
-                {p.title} <StatusBadge status={p.status} />{" "}
-                {p.status !== "draft" && <IndexBadge status={p.index_status} />}
+                {p.title} <StatusBadge status={p.status === "approved" ? "done" : p.status}
+                  label={STATUS_LABEL[p.status] ?? prettify(p.status)} />{" "}
+                {p.status === "approved" && <IndexBadge status={p.index_status} />}
               </div>
               <div className="doc-row__meta">
                 {KIND_LABEL[p.kind] ?? prettify(p.kind)} · version {p.version} · for {audienceLabel(p.audience)}
@@ -297,10 +354,10 @@ function ManageLibrary(): ReactNode {
                 {p.status === "approved" ? ` · read by ${p.acknowledgement_count}` : ""}
                 {p.review_due_date ? ` · review by ${new Date(p.review_due_date).toLocaleDateString()}` : ""}
               </div>
-              {p.index_status === "failed" && p.index_error && (
-                <p className="field-error" style={{ margin: "4px 0 0" }}>Index failed: {p.index_error}</p>
+              {p.status === "approved" && p.index_status === "failed" && p.index_error && (
+                <p className="field-error" style={{ margin: "4px 0 0" }}>Why the sync failed: {p.index_error}</p>
               )}
-              {p.index_status === "indexing" && <IndexWatcher policyId={p.id} />}
+              {p.index_status === "indexing" && <IndexWatcher policyId={p.id} title={p.title} />}
             </div>
             <div className="btn-row">
               {p.has_file && (
@@ -319,18 +376,18 @@ function ManageLibrary(): ReactNode {
                       Replace file
                     </Button>
                   )}
-                  <Button small variant="primary" title="Publish it and send it to the chatbot's index"
+                  <Button small variant="primary" title="Make it visible and sync it to the chatbot"
                     onClick={() => act.mutate(() => approvePolicy(p.id))}>
-                    Approve
+                    Publish
                   </Button>
                 </>
               )}
               {p.status === "approved" && (
                 <>
                   {(p.index_status === "failed" || p.index_status === "not_indexed") && (
-                    <Button small variant="primary" title="Try indexing this version again"
+                    <Button small variant="primary" title="Send this version to the chatbot again"
                       onClick={() => act.mutate(() => reindexPolicy(p.id))}>
-                      Reindex
+                      {p.index_status === "failed" ? "Retry sync" : "Sync now"}
                     </Button>
                   )}
                   <Button small title="Start a new version as a draft"
@@ -377,10 +434,11 @@ function ManageLibrary(): ReactNode {
         <PolicyForm
           {...(form.existing ? { existing: form.existing } : {})}
           onClose={() => setForm(null)}
-          onDone={() => {
+          onDone={(saved) => {
             setForm(null);
             refresh();
-            toast.push("Draft saved", { tone: "ok" });
+            const m = publishedMessage(saved);
+            toast.push(m.title, { tone: m.tone, message: m.message });
           }}
         />
       )}
@@ -388,10 +446,11 @@ function ManageLibrary(): ReactNode {
         <UploadPolicyDialog
           {...(upload.replacing ? { replacing: upload.replacing } : {})}
           onClose={() => setUpload(null)}
-          onDone={() => {
+          onDone={(saved) => {
             setUpload(null);
             refresh();
-            toast.push("File checked and saved as a draft", { tone: "ok" });
+            const m = publishedMessage(saved);
+            toast.push(m.title, { tone: m.tone, message: m.message });
           }}
         />
       )}

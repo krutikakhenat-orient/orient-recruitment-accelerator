@@ -37,6 +37,10 @@ from app.modules.policies.models import (
 )
 from app.modules.policies.schemas import DuplicateRef, IndexStatusRead, PolicyRead
 
+# Written into FAQ drafts created from a question. A draft that still contains it has no answer
+# and must not be approved (it would be published and answer questions with this text).
+FAQ_ANSWER_PLACEHOLDER = "(to be written by HR)"
+
 
 def _now() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
@@ -140,8 +144,12 @@ def create_policy(
     db: Session, *, actor: AuthenticatedActor, store: ObjectStore, title: str, kind: str,
     department: str | None, body: str, effective_date: dt.date | None,
     audience: list[str] | None = None, review_due_date: dt.date | None = None,
+    publish_with: KnowledgeBase | None = None,
 ) -> PolicyDocument:
-    """Typed-in policy, SOP or FAQ. Stored as a Markdown object so it is indexed like a file."""
+    """Typed-in policy, SOP or FAQ. Stored as a Markdown object so it is indexed like a file.
+
+    With ``publish_with`` (a knowledge base) it is published and sent for syncing at once;
+    without it, it stays a draft (``Save as draft``, and FAQ drafts made from a question)."""
     policy = PolicyDocument(
         id=uuid.uuid4(), organisation_id=actor.organisation_id, family_id=uuid.uuid4(),
         title=title.strip(), kind=kind, department=(department or None), body=body, version=1,
@@ -153,6 +161,8 @@ def create_policy(
     db.add(policy)
     db.flush()
     _audit(db, actor, "policy.drafted", policy)
+    if publish_with is not None:
+        approve_policy(db, actor=actor, policy=policy, store=store, kb=publish_with)
     return policy
 
 
@@ -194,8 +204,10 @@ def upload_policy(
     filename: str, declared_content_type: str, data: bytes, max_bytes: int,
     title: str, kind: str, department: str | None, audience: list[str] | None,
     effective_date: dt.date | None, review_due_date: dt.date | None, confirm_duplicate: bool,
+    publish_with: KnowledgeBase | None = None,
 ) -> PolicyDocument:
-    """Validate, scan and store an uploaded file, then create a draft from it (Req 1)."""
+    """Validate, scan and store an uploaded file (Req 1). Published and sent for syncing at
+    once when ``publish_with`` is given; otherwise kept as a draft."""
     received = files.receive_upload(
         store=store, scanner=scanner, organisation_id=actor.organisation_id, filename=filename,
         declared_content_type=declared_content_type, data=data, max_bytes=max_bytes,
@@ -212,6 +224,8 @@ def upload_policy(
     db.add(policy)
     db.flush()
     _audit(db, actor, "policy.uploaded", policy)
+    if publish_with is not None:
+        approve_policy(db, actor=actor, policy=policy, store=store, kb=publish_with)
     return policy
 
 
@@ -308,6 +322,11 @@ def approve_policy(
 ) -> PolicyDocument:
     if policy.status != PolicyStatus.DRAFT.value:
         raise ConflictError("Only a draft can be approved.")
+    if FAQ_ANSWER_PLACEHOLDER in policy.body:
+        raise ValidationError(
+            "This draft has no answer yet. Click Edit, replace "
+            f"'{FAQ_ANSWER_PLACEHOLDER}' with the answer, then approve it."
+        )
     previous = db.execute(
         select(PolicyDocument).where(
             PolicyDocument.family_id == policy.family_id,

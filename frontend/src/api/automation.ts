@@ -320,6 +320,8 @@ export const createPolicy = (body: {
   body: string;
   audience?: string[];
   review_due_date?: string;
+  /* true (default on the server) = publish and sync now; false = keep as a draft. */
+  publish?: boolean;
 }) => apiFetch("/api/v1/policies", policy, post(body));
 export const updatePolicy = (
   policyId: string,
@@ -341,6 +343,8 @@ export interface PolicyUpload {
   audience?: string[];
   reviewDueDate?: string;
   confirmDuplicate?: boolean;
+  /* true = publish and sync on upload (default); false = keep as a draft. */
+  publish?: boolean;
 }
 export const uploadPolicy = (u: PolicyUpload) => {
   const form = new FormData();
@@ -351,6 +355,7 @@ export const uploadPolicy = (u: PolicyUpload) => {
   if (u.audience && u.audience.length) form.append("audience", u.audience.join(","));
   if (u.reviewDueDate) form.append("review_due_date", u.reviewDueDate);
   if (u.confirmDuplicate) form.append("confirm_duplicate", "true");
+  form.append("publish", u.publish === false ? "false" : "true");
   return apiUpload("/api/v1/policies/upload", policy, form);
 };
 export const replacePolicyFile = (policyId: string, file: File, confirmDuplicate = false) => {

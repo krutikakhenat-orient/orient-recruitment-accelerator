@@ -46,7 +46,10 @@ def best_sentences(body: str, question_tokens: set[str]) -> str:
     scored = [(len(question_tokens & tokens(s)), i, s) for i, s in enumerate(sentences)]
     top = sorted((x for x in scored if x[0] > 0), key=lambda x: (-x[0], x[1]))[:2]
     if not top:
-        return sentences[0][:400] if sentences else ""
+        # No sentence mentions any word of the question (e.g. only the title matched). Quoting
+        # the first sentence instead gave unrelated replies ("What is the dress code?" ->
+        # "SYNTHETIC SAMPLE."), so return nothing and let the caller say "not found".
+        return ""
     chosen = sorted(top, key=lambda x: x[1])
     return " ".join(s for _, _, s in chosen)[:600]
 
@@ -91,9 +94,11 @@ class KeywordKnowledgeBase:
             score = 3 * len(q_tokens & tokens(p.title)) + len(q_tokens & tokens(p.body))
             if score <= 0:
                 continue
+            text = best_sentences(p.body, q_tokens)
+            if not text:
+                continue  # nothing in the text itself answers the question
             scored.append(Passage(
-                policy_id=p.id, version=p.version, title=p.title,
-                text=best_sentences(p.body, q_tokens), score=float(score),
+                policy_id=p.id, version=p.version, title=p.title, text=text, score=float(score),
             ))
         scored.sort(key=lambda x: (-x.score, x.title))
         return scored[:top_k]

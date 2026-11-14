@@ -20,6 +20,8 @@ class PolicyCreate(BaseModel):
     effective_date: dt.date | None = None
     review_due_date: dt.date | None = None
     audience: list[str] | None = Field(default=None, max_length=10)
+    # Publish and sync at once (default). false = keep as a draft ("Save as draft").
+    publish: bool = True
 
     @field_validator("audience")
     @classmethod

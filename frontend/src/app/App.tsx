@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
-import { Logo } from "../components/Logo";
 import { OrientAssistant } from "../components/OrientAssistant";
 import { StartupScreen } from "../components/StartupScreen";
 import { AdminPage } from "../pages/AdminPage";
@@ -12,8 +11,8 @@ import { ConfirmInterviewPage } from "../pages/ConfirmInterviewPage";
 import { GuidePage } from "../pages/GuidePage";
 import { IntegrationsPage } from "../pages/IntegrationsPage";
 import { OnboardingPage } from "../pages/OnboardingPage";
-import { HrChatLauncher } from "../components/hr-chat/HrChatLauncher";
 import { AskHrPage } from "../pages/AskHrPage";
+import { EmployeeShell } from "../pages/employee/EmployeeShell";
 import { PoliciesPage } from "../pages/PoliciesPage";
 import { SlaPage } from "../pages/SlaPage";
 import { WaitlistPage } from "../pages/WaitlistPage";
@@ -23,7 +22,6 @@ import { CampaignsPage } from "../pages/CampaignsPage";
 import { CandidateSummaryPage } from "../pages/CandidateSummaryPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { DecisionsPage } from "../pages/DecisionsPage";
-import { EmployeePage } from "../pages/EmployeePage";
 import { LoginPage } from "../pages/LoginPage";
 import { ManagementPage } from "../pages/ManagementPage";
 import { OutcomesPage } from "../pages/OutcomesPage";
@@ -50,44 +48,7 @@ function RequireAuth({ children }: { children: ReactNode }): ReactNode {
   return children;
 }
 
-/* Minimal shell for the employee experience: a lightweight header (product name, Ask HR,
-   Sign out) and nothing from the staff portal — no AppLayout sidebar, no staff routes, no
-   OrientAssistant (staff workflow help). An employee sees the EmployeePage, and the HR policy
-   chatbot from the header link, /ask-hr, or the floating Ask HR button. */
-function EmployeeShell(): ReactNode {
-  const { signOut } = useAuth();
-  return (
-    <div className="main">
-      <a href="#main" className="skip-link">
-        Skip to main content
-      </a>
-      <header className="topbar">
-        <div className="btn-row" style={{ alignItems: "center", gap: 10 }}>
-          <Logo size={30} title="Orient Recruitment Accelerator" />
-          <div className="topbar__title">Orient Recruitment Accelerator</div>
-        </div>
-        <div className="topbar__spacer" />
-        <Link className="btn btn--sm btn--primary" to="/ask-hr">
-          Ask HR
-        </Link>
-        <Link className="btn btn--sm btn--ghost" to="/guide">
-          User guide
-        </Link>
-        <button className="btn btn--sm" onClick={signOut}>
-          Sign out
-        </button>
-      </header>
-      <main id="main" className="content">
-        <Routes>
-          <Route path="/" element={<EmployeePage />} />
-          <Route path="/ask-hr" element={<EmployeePage key="ask" initialTab="ask" />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
-      <HrChatLauncher />
-    </div>
-  );
-}
+// The employee portal (Home, Ask HR, Policies, Induction) lives in pages/employee/.
 
 export function App(): ReactNode {
   const { actor } = useAuth();

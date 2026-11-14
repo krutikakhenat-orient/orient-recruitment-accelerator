@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+
 import {
   downloadInductionCertificate,
   fetchInductionCertificate,
@@ -11,7 +12,6 @@ import {
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
 import {
-  PageHeader,
   Badge,
   Button,
   Card,
@@ -19,51 +19,37 @@ import {
   ErrorNote,
   Loading,
   MatchBar,
-  Tabs,
 } from "../components/ui";
-import { AssistantBox, PolicyLibrary } from "./PoliciesPage";
-
-/* The employee induction dashboard. It renders EXACTLY two features and nothing else from
-   the staff portal:
+/* The employee induction page (route /induction in the employee portal). Two features:
      1. "Watch induction video" — the developer-provisioned video, fetched as a Blob with the
         bearer token and played via an object URL (tokens are in-memory only, so a plain
         <video src> cannot authenticate). Completing the video records the completion.
      2. "Certificate" — locked until the induction is marked complete, then unlocks a button
-        that fetches the certificate HTML and opens it in a new tab for viewing/printing. */
-export function EmployeePage({
-  initialTab = "induction",
-}: { initialTab?: "induction" | "policies" | "ask" } = {}): ReactNode {
+        that fetches the certificate HTML and opens it in a new tab for viewing/printing.
+   Home, Ask HR and Policies are separate pages (pages/employee/). */
+export function EmployeePage(): ReactNode {
   const { token } = useAuth();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<string>(initialTab);
 
   const status = useQuery({ queryKey: ["induction-status"], queryFn: getInductionStatus });
 
   return (
-    <>
-      <PageHeader
-        title="Welcome to your first days"
-        description="Watch the induction video and download your certificate. Read the company policies, or ask HR a question."
-      />
-      <Tabs
-        label="Your first days"
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { id: "induction", label: "Induction" },
-          { id: "policies", label: "Policies & guides" },
-          { id: "ask", label: "Ask HR" },
-        ]}
-      />
-      {tab === "policies" && <PolicyLibrary />}
-      {tab === "ask" && <AssistantBox />}
+    <div className="emp-page">
+      <header className="emp-hero emp-hero--compact">
+        <p className="emp-eyebrow">Induction</p>
+        <h1 className="emp-title">Watch, then get your certificate</h1>
+        <p className="emp-lede">
+          The video introduces the company and how things work. Your certificate unlocks when
+          you have watched it to the end.
+        </p>
+      </header>
 
-      {tab === "induction" && status.isLoading && <Loading label="Loading your induction…" />}
-      {tab === "induction" && status.error && (
+      {status.isLoading && <Loading label="Loading your induction…" />}
+      {status.error && (
         <ErrorNote>Could not load your induction. Please try again.</ErrorNote>
       )}
 
-      {tab === "induction" && status.data && (
+      {status.data && (
         <>
           <InductionVideoCard
             token={token}
@@ -76,7 +62,7 @@ export function EmployeePage({
           <CertificateCard token={token} completed={status.data.completed} />
         </>
       )}
-    </>
+    </div>
   );
 }
 

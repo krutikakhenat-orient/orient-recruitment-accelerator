@@ -39,7 +39,10 @@ def hr(client, engine, store):  # type: ignore[no-untyped-def]
 
 
 def _upload(client, headers, name, data, ctype, **form):  # type: ignore[no-untyped-def]
-    fields = {"title": "SYNTHETIC Leave policy", **{k: str(v) for k, v in form.items()}}
+    # Most tests here check the file handling on a draft ("Save as draft"); the publish-on-
+    # upload default has its own tests below.
+    fields = {"title": "SYNTHETIC Leave policy", "publish": "false",
+              **{k: str(v) for k, v in form.items()}}
     return client.post("/api/v1/policies/upload", headers=headers, data=fields,
                        files={"file": (name, data, ctype)})
 
@@ -135,6 +138,33 @@ def test_bad_audience_tag_is_rejected(client, hr) -> None:  # type: ignore[no-un
     resp = _upload(client, hr["admin"], "leave.txt", LEAVE_TEXT.encode(), "text/plain",
                    audience="role:recruiter,<script>")
     assert resp.status_code == 422
+
+
+def test_upload_publishes_and_syncs_by_default(client, hr) -> None:  # type: ignore[no-untyped-def]
+    # One step: the file is live, synced (keyword backend syncs at once) and answerable.
+    resp = _upload(client, hr["admin"], "leave.txt", LEAVE_TEXT.encode(), "text/plain",
+                   publish="true")
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["status"] == "approved" and body["index_status"] == "ready"
+    answer = client.post("/api/v1/assistant/ask", headers=hr["employee"],
+                         json={"question": "How many days of paid annual leave?"}).json()
+    assert answer["answered"] is True
+    assert answer["sources"][0]["title"] == "SYNTHETIC Leave policy"
+
+
+def test_typed_policy_publishes_by_default_and_draft_is_opt_in(client, hr) -> None:  # type: ignore[no-untyped-def]
+    live = client.post("/api/v1/policies", headers=hr["admin"],
+                       json={"title": "SYNTHETIC Dress code",
+                             "body": "Business casual on weekdays."})
+    assert live.status_code == 201 and live.json()["status"] == "approved"
+    assert live.json()["index_status"] == "ready"
+    draft = client.post("/api/v1/policies", headers=hr["admin"],
+                        json={"title": "SYNTHETIC Travel", "body": "Book travel via HR.",
+                              "publish": False})
+    assert draft.json()["status"] == "draft" and draft.json()["index_status"] == "not_indexed"
+    titles = [p["title"] for p in client.get("/api/v1/policies", headers=hr["employee"]).json()]
+    assert "SYNTHETIC Dress code" in titles and "SYNTHETIC Travel" not in titles
 
 
 def test_typed_in_policy_is_stored_as_markdown(client, hr, store) -> None:  # type: ignore[no-untyped-def]
