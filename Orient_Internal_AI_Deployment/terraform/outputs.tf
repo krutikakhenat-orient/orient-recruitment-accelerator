@@ -18,6 +18,9 @@ output "files_bucket" { value = aws_s3_bucket.files.bucket }
 output "db_cluster_arn" { value = aws_rds_cluster.main.arn }
 output "db_secret_arn" { value = aws_secretsmanager_secret.db.arn }
 output "ai_interview_enabled" { value = local.ai_on }
+output "hr_chatbot_enabled" { value = var.hr_chatbot_enabled }
+output "hr_kb_id" { value = var.hr_chatbot_enabled ? aws_bedrockagent_knowledge_base.hr[0].id : null }
+output "hr_docs_bucket" { value = var.hr_chatbot_enabled ? aws_s3_bucket.hr_docs[0].bucket : null }
 # Shared HMAC secret: the agent signs result webhooks with it, the API verifies them.
 output "webhook_secret" {
   value     = random_password.webhook.result

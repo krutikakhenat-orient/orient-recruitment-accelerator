@@ -93,3 +93,33 @@ variable "log_retention_days" {
   type    = number
   default = 30
 }
+
+# ---------------------------------------------------------------- HR policy chatbot (ADR-0017)
+variable "hr_chatbot_enabled" {
+  description = "Create the Bedrock Knowledge Base stack and switch the API to it. false = keyword search only (no chatbot AWS resources)."
+  type        = bool
+  default     = false
+}
+
+variable "hr_chatbot_model_id" {
+  description = "Bedrock generation model for answers. gpt-oss-20b runs on demand in ap-south-1 (no cross-region routing)."
+  type        = string
+  default     = "openai.gpt-oss-20b-1:0"
+}
+
+variable "hr_chatbot_embedding_model_id" {
+  type    = string
+  default = "amazon.titan-embed-text-v2:0"
+}
+
+variable "hr_chatbot_min_score" {
+  description = "Minimum retrieval score for a passage to be used (Phase 0 trial: relevant 0.73-0.85, unrelated 0.49-0.60)."
+  type        = number
+  default     = 0.65
+}
+
+variable "hr_chatbot_reconcile_cron" {
+  description = "When the nightly settle + reconcile job runs (UTC). Default 20:30 UTC = 02:00 IST. Kept to once a day so Aurora can stay paused."
+  type        = string
+  default     = "cron(30 20 * * ? *)"
+}

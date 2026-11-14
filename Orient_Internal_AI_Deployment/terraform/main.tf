@@ -283,6 +283,7 @@ locals {
       ORA_DB_NULL_POOL         = "true"
     },
     var.app_base_url != "" ? { ORA_APP_BASE_URL = var.app_base_url } : {},
+    local.chatbot_env, # HR policy chatbot (hr_chatbot.tf); empty when disabled
     local.ai_on ? {
       ORA_AI_INTERVIEW_ENABLED          = "true"
       ORA_AI_INTERVIEW_AGENT_MODE       = "agentcore"

@@ -30,10 +30,16 @@ def run_index_poll() -> str:
 
 
 def run_reconcile() -> str:
+    """Nightly maintenance: settle finished syncs, then repair approved/ (one DB wake-up).
+
+    Scheduled once a day on purpose: every scheduled run wakes the auto-paused Aurora
+    cluster, so a frequent poll would remove its idle savings. While HR watches an
+    'Indexing' policy, the index-status endpoint polls on demand."""
     settings = get_settings()
     db = SessionLocal()
     try:
         kb = build_knowledge_base(settings, db)
+        finished = service.poll(db, kb)
         notes = service.reconcile(db, kb, load_source=source_loader(policy_file_store(settings)))
         db.commit()
     except Exception:
@@ -41,4 +47,4 @@ def run_reconcile() -> str:
         raise
     finally:
         db.close()
-    return f"kb reconcile: {len(notes)} correction(s)"
+    return f"kb reconcile: {finished} sync job(s) settled, {len(notes)} correction(s)"
