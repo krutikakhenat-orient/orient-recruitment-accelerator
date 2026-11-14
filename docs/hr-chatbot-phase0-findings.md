@@ -38,9 +38,12 @@ measured in Cost Explorer.
    `assistant/composer.py`: passages go as plain context and only the question is sent as
    `guardContent`; the output is still guarded. Verified live: correct cited answers, and a
    prompt-attack question is still blocked.
-3. **Relevance threshold too low.** Relevant passages scored 0.73-0.85; unrelated ones
-   0.49-0.60. Default `ORA_CHATBOT_MIN_SCORE` raised from 0.40 to **0.65**. With 0.65 the
-   "pet policy" question gets no passage and returns "not found" without calling the model.
+3. **Relevance threshold.** In the trial, relevant passages scored 0.73-0.85 and unrelated
+   ones 0.49-0.60, so the default was first raised from 0.40 to 0.65. **Revised in UAT
+   (2026-11-14) to 0.55:** short real policies scored lower for questions they do answer
+   ("What are the working hours?" 0.64, "Can I work from home?" 0.59), so 0.65 rejected good
+   matches, while unrelated questions stayed at or below 0.56. The threshold is only a noise
+   gate; the model must still answer from the passages and cite them, else "not found".
 
 ## Not verified (carry into UAT)
 

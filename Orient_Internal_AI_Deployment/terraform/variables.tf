@@ -113,9 +113,9 @@ variable "hr_chatbot_embedding_model_id" {
 }
 
 variable "hr_chatbot_min_score" {
-  description = "Minimum retrieval score for a passage to be used (Phase 0 trial: relevant 0.73-0.85, unrelated 0.49-0.60)."
+  description = "Minimum retrieval score for a passage to reach the model. Only a noise gate: the model must still answer from the passages and cite them, else 'not found'. UAT: short real policies 0.59-0.81, unrelated questions <= 0.56."
   type        = number
-  default     = 0.65
+  default     = 0.55
 }
 
 variable "hr_chatbot_reconcile_cron" {
