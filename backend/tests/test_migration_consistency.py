@@ -74,6 +74,7 @@ def test_model_tables_present() -> None:
         "induction_completion",
         # AI voice interview
         "ai_interview_session",
+        "ai_interview_recording",  # migration 0013 (video evidence, consented)
         # Long-term automation (migration 0012)
         "notification_template",
         "notification_delivery",

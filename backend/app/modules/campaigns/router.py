@@ -16,6 +16,7 @@ from app.modules.campaigns.schemas import (
     CampaignAssignRequest,
     CampaignCreate,
     CampaignRead,
+    CampaignSetupOverviewRead,
     CampaignSetupStatusRead,
     CampaignTransitionRequest,
     ClosureReadinessRead,
@@ -54,6 +55,54 @@ def list_campaigns(
 ) -> list[CampaignRead]:
     campaigns = repo.list_for_org(db, actor.organisation_id, limit=limit, offset=offset)
     return [CampaignRead.model_validate(c) for c in campaigns]
+
+
+# Registered before "/{campaign_id}" so the literal path is matched first.
+@router.get("/setup-overview", response_model=list[CampaignSetupOverviewRead])
+def campaign_setup_overview(
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> list[CampaignSetupOverviewRead]:
+    """The setup checklist of every job the caller works on, for the dashboard.
+
+    Same rule as ``/{id}/setup-status``: ``campaign.edit`` or ``campaign.publish``, and only
+    jobs the caller is assigned to (object-level). Others get an empty list. Read-only.
+    """
+    if not (
+        has_permission(actor, Permission.CAMPAIGN_EDIT)
+        or has_permission(actor, Permission.CAMPAIGN_PUBLISH)
+    ):
+        return []
+    campaigns = repo.list_for_org(db, actor.organisation_id, limit=200, offset=0)
+    return [
+        CampaignSetupOverviewRead(
+            campaign_id=c.id,
+            name=c.name,
+            position_title=c.position_title,
+            state=c.state,
+            setup=_setup_read(service.setup_status(db, campaign=c)),
+        )
+        for c in campaigns
+        if c.id in actor.assigned_campaign_ids
+    ]
+
+
+def _setup_read(status: service.SetupStatus) -> CampaignSetupStatusRead:
+    return CampaignSetupStatusRead(
+        campaign_id=status.campaign_id,
+        is_open=status.is_open,
+        next_step_key=status.next_step_key,
+        steps=[
+            SetupStepRead(
+                key=s.key, title=s.title, description=s.description,
+                status=s.status, who=s.who,
+            )
+            for s in status.steps
+        ],
+        latest_jd_version_id=status.latest_jd_version_id,
+        latest_jd_status=status.latest_jd_status,
+        draft_form_version_id=status.draft_form_version_id,
+    )
 
 
 @router.get("/{campaign_id}", response_model=CampaignRead)
@@ -191,22 +240,7 @@ def campaign_setup_status(
         else Permission.CAMPAIGN_EDIT
     )
     require_campaign_permission(actor, needed, campaign_id)
-    status = service.setup_status(db, campaign=campaign)
-    return CampaignSetupStatusRead(
-        campaign_id=status.campaign_id,
-        is_open=status.is_open,
-        next_step_key=status.next_step_key,
-        steps=[
-            SetupStepRead(
-                key=s.key, title=s.title, description=s.description,
-                status=s.status, who=s.who,
-            )
-            for s in status.steps
-        ],
-        latest_jd_version_id=status.latest_jd_version_id,
-        latest_jd_status=status.latest_jd_status,
-        draft_form_version_id=status.draft_form_version_id,
-    )
+    return _setup_read(service.setup_status(db, campaign=campaign))
 
 
 @router.post("/{campaign_id}/open-for-applications", response_model=CampaignRead)

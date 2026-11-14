@@ -40,10 +40,40 @@ class Settings(BaseSettings):
     max_questions: int = 8
     max_followups_per_question: int = 1
     min_words_before_no_followup: int = 25
-    # Quiet time after the last final transcript before the agent replies.
+    # Quiet time after the last final transcript before the agent replies (legacy engine only;
+    # the Pipecat engine decides the end of a turn with voice activity + a turn-detection model).
     endpoint_silence_ms: int = 800
     idle_prompt_seconds: int = 45
     allow_text_input: bool = True  # typed answers: accessibility fallback and test aid
+
+    # --- Voice engine ---
+    # "pipecat": Pipecat pipeline (VAD, smart end-of-turn detection, interruption handling,
+    # tracing). "legacy": the original hand-written asyncio session, kept as a rollback switch.
+    voice_engine: Literal["pipecat", "legacy"] = "pipecat"
+    # Voice activity detection: how long the audio must be quiet before the end-of-turn model is
+    # asked whether the candidate has finished.
+    vad_stop_secs: float = 0.4
+    # The end-of-turn model may judge the answer unfinished (a thinking pause). The turn is
+    # still closed after this much silence, so a candidate who stops talking is never stuck.
+    turn_max_pause_secs: float = 3.5
+    # While the agent is speaking, the candidate must say at least this many words to cut it
+    # off. Coughs, "mm", and the agent's own voice picked up by the microphone do not.
+    barge_in_min_words: int = 3
+    # If the candidate keeps talking within this long of the agent starting its next line, the
+    # new words are joined to the previous answer instead of becoming a reply to a question
+    # the candidate has not heard yet.
+    answer_continuation_window_secs: float = 2.5
+
+    # --- Observability (OpenTelemetry) ---
+    # Spans never contain what the candidate or agent said; only timings, counts and ids.
+    otel_enabled: bool = True
+    otel_service_name: str = "interview-agent"
+    # "auto": use the provider the AWS Distro for OpenTelemetry (ADOT) installs on AgentCore;
+    # "otlp": export to OTEL_EXPORTER_OTLP_* (a collector or the CloudWatch OTLP endpoint);
+    # "console": print spans (debugging); "none": create spans but export nothing.
+    otel_exporter: Literal["auto", "otlp", "console", "none"] = "auto"
+    # Pipecat's own log lines can contain transcripts. At INFO and below they are dropped.
+    pipecat_log_level: Literal["WARNING", "ERROR", "CRITICAL"] = "WARNING"
 
     # --- Result delivery ---
     output_dir: str = "./out"

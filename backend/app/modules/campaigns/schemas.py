@@ -72,6 +72,17 @@ class CampaignSetupStatusRead(BaseModel):
     draft_form_version_id: uuid.UUID | None
 
 
+class CampaignSetupOverviewRead(BaseModel):
+    """One job on the dashboard's "Jobs you are setting up" list: its checklist plus the
+    names HR recognises. Read-only; no candidate data."""
+
+    campaign_id: uuid.UUID
+    name: str
+    position_title: str
+    state: str
+    setup: CampaignSetupStatusRead
+
+
 class CampaignRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -106,3 +117,13 @@ class PublicRoleRead(BaseModel):
     location: str | None
     employment_type: str | None
     work_mode: str | None
+    # Candidate-facing content of the APPROVED job description only (never drafts, the
+    # extraction draft, screening rules, thresholds or anything internal). Empty when the
+    # job has no approved JD yet.
+    department: str | None = None
+    number_of_openings: int | None = None
+    minimum_experience_years: float | None = None
+    responsibilities: list[str] = []
+    must_have_skills: list[str] = []
+    nice_to_have_skills: list[str] = []
+    posted_at: dt.datetime | None = None

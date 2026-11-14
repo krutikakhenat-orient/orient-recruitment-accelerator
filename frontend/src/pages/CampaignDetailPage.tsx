@@ -15,19 +15,16 @@ import {
   createInterviewAssignment,
   devOpenCampaignNow,
   downloadCampaignExport,
-  downloadResume,
   getCampaign,
   getClosureReadiness,
   listApplications,
   listInterviewAssignments,
-  listInvitations,
   listJdVersions,
   listScreeningRuns,
   listSlots,
   listStages,
   listUsers,
   removeInterviewAssignment,
-  recordWalkInInterview,
   rejectJd,
   rescoreCampaign,
   runScreening,
@@ -40,7 +37,6 @@ import {
   type ScreeningRun,
 } from "../api/resources";
 import { useAuth } from "../app/auth-context";
-import { AiInterviewsPanel } from "../components/AiInterviewsPanel";
 import {
   ApplyLinkStrip,
   NextStepBanner,
@@ -49,9 +45,15 @@ import {
   type SetupSection,
 } from "../components/CampaignSetup";
 import { isSettingUp, plainCampaignStatus } from "../lib/campaignStatus";
+import {
+  STAGES,
+  candidatePath,
+  nextStepFor,
+  stageFor,
+  stateLabel,
+  type StageKey,
+} from "../lib/candidateStage";
 import { CandidateScorecardDrawer } from "../components/CandidateScorecardDrawer";
-import { ConfirmationControls } from "../components/ConfirmationControls";
-import { JourneyButton } from "../components/JourneyButton";
 import {
   HIDDEN_ANSWER_KEYS,
   prettyFieldKey,
@@ -90,15 +92,15 @@ const TAB_META: Record<Tab, { label: string; permission: string | null; role: st
   },
   candidates: {
     label: "2 · Candidates",
-    permission: "screening.execute",
+    permission: "candidate.view",
     role: "Recruiter",
-    blurb: "Everyone who applied, their screening score, and walk-in resumes.",
+    blurb: "Every candidate, their stage and what happens next. Click a name for everything about that person.",
   },
   interviews: {
-    label: "3 · Interviews",
-    permission: "interview.approve",
-    role: "Recruiter Admin",
-    blurb: "Pick who to interview, set up interview slots and track confirmations.",
+    label: "3 · Interview setup",
+    permission: "interview.schedule",
+    role: "Recruiter / Recruiter Admin",
+    blurb: "Job-wide interview setup: interview rounds, time slots and who interviews.",
   },
   settings: {
     label: "Settings",
@@ -401,10 +403,16 @@ export function CampaignDetailPage(): ReactNode {
               Candidates appear here once the job is open and people apply. You can also add walk-in resumes below.
             </p>
           )}
-          <ApplicationsTab campaignId={id} />
+          <ApplicationsTab
+            campaignId={id}
+            acceptingApplications={acceptingApplications}
+            onGoToSetup={() => goToSetup()}
+          />
         </>
       )}
-      {tab === "interviews" && <InterviewsTab campaignId={id} />}
+      {tab === "interviews" && (
+        <InterviewsTab campaignId={id} onGoToCandidates={() => setTab("candidates")} />
+      )}
       {tab === "settings" && <SettingsTab campaignId={id} />}
     </>
   );
@@ -824,7 +832,13 @@ function InterviewerAssignmentsCard({
   );
 }
 
-function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
+function InterviewsTab({
+  campaignId,
+  onGoToCandidates,
+}: {
+  campaignId: string;
+  onGoToCandidates: () => void;
+}): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
   const { hasPermission, canAccessCampaign } = useAuth();
@@ -832,21 +846,9 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
 
   const assigned = canAccessCampaign(campaignId);
   const canSchedule = hasPermission("interview.schedule") && assigned;
-  // Selecting a below-threshold candidate for interview needs BOTH approve + schedule
-  // (the walk-in path issues the invitation and books a slot) plus campaign assignment.
-  const canSelectForInterview =
-    hasPermission("interview.approve") && hasPermission("interview.schedule") && assigned;
 
-  // "Select for interview" override modal: picking a candidate who is under review (below
-  // the automatic 50% bar) overrides the screening outcome, so the recruiter must record a
-  // reason. The reason is sent to the server and written to the audit trail.
-  const [selectFor, setSelectFor] = useState<Application | null>(null);
-  const [selectReason, setSelectReason] = useState("");
-
-  const apps = useQuery({ queryKey: ["applications", campaignId], queryFn: () => listApplications(campaignId) });
   const stages = useQuery({ queryKey: ["stages", campaignId], queryFn: () => listStages(campaignId) });
   const slots = useQuery({ queryKey: ["slots", campaignId], queryFn: () => listSlots(campaignId) });
-  const invites = useQuery({ queryKey: ["invitations", campaignId], queryFn: () => listInvitations(campaignId) });
 
   // --- stage / slot creation ---
   const [stageName, setStageName] = useState("");
@@ -881,220 +883,25 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
     onError: (e) => setError(e instanceof ApiError ? e.message : "Could not create slot."),
   });
 
-  // Candidates scoring >= 50% are progressed to the Interview Panel AUTOMATICALLY on submit
-  // (backend auto_progress_to_interview). Candidates BELOW 50% stay here, under review, and
-  // a Recruitment Admin can still manually "Select for interview" with a recorded reason —
-  // this puts them on the SAME Interview Panel tab as the auto-progressed candidates.
-  const selectForInterviewM = useMutation({
-    mutationFn: (vars: { applicationId: string; reason?: string }) =>
-      recordWalkInInterview(vars.applicationId, vars.reason),
-    onSuccess: () => {
-      setSelectFor(null);
-      setSelectReason("");
-      void qc.invalidateQueries({ queryKey: ["applications", campaignId] });
-      void qc.invalidateQueries({ queryKey: ["invitations", campaignId] });
-      toast.push("Candidate selected — now on the Interview Panel's list", { tone: "ok" });
-    },
-    onError: (e) =>
-      setError(e instanceof ApiError ? e.message : "Could not select this candidate."),
-  });
-
-  const invitedAppIds = new Set((invites.data ?? []).map((i) => i.application_id));
-  // Candidates eligible to be selected: screened or under manual review, not already invited.
-  const eligible = (apps.data ?? []).filter(
-    (a) => ["screened", "manual_review"].includes(a.state) && !invitedAppIds.has(a.id),
-  );
-  const nameOf = (a: Application): string =>
-    typeof a.answers["full_name"] === "string" ? (a.answers["full_name"] as string) : a.id.slice(0, 8);
-  const appById = new Map((apps.data ?? []).map((a) => [a.id, a]));
-
   return (
     <>
+      <div className="next-banner" role="note">
+        <div className="next-banner__text">
+          <div>
+            <strong>Inviting and following each candidate happens on their own page.</strong>
+            <span className="subtle">
+              {" "}
+              Open a candidate from the Candidates tab to offer an AI interview, invite them to a
+              panel interview, and record the decision. This tab is for job-wide interview setup.
+            </span>
+          </div>
+        </div>
+        <Button small onClick={onGoToCandidates}>
+          Go to candidates →
+        </Button>
+      </div>
       <InterviewerAssignmentsCard campaignId={campaignId} stages={stages.data ?? []} />
-      <AccessNote campaignId={campaignId} permission="interview.approve" role="Recruiter Admin / Hiring Manager" />
       {error && <ErrorNote>{error}</ErrorNote>}
-
-      <AiInterviewsPanel
-        campaignId={campaignId}
-        nameOf={(id) => {
-          const a = appById.get(id);
-          return a ? nameOf(a) : id.slice(0, 8);
-        }}
-        offerable={(apps.data ?? [])
-          .filter((a) =>
-            ["screened", "manual_review", "interview_recommended", "interview_scheduled"].includes(a.state),
-          )
-          .map((a) => ({ id: a.id, label: nameOf(a) }))}
-      />
-
-      <Card
-        title="Candidates for interview"
-        description="People recommended for an interview. An approver invites them; nobody is invited automatically."
-      >
-        <p className="subtle" style={{ marginTop: 0 }}>
-          Candidates who score <strong>50% or above</strong> are added to the Interview Panel&rsquo;s
-          list <strong>automatically</strong> — they appear directly on the Interview Panel tab.
-          Candidates <strong>below 50%</strong> stay here under review; you can still{" "}
-          <strong>Select for interview</strong> (a reason is required) to place them on the same
-          Interview Panel tab. Nothing is sent to the candidate automatically; contact shortlisted
-          candidates with the details on file.
-        </p>
-        {apps.isLoading && <Loading />}
-        {!apps.isLoading && eligible.length === 0 && (
-          <Empty>
-            No candidates are awaiting a decision here. Candidates scoring 50%+ have already moved to
-            the Interview Panel; there are no under-review candidates to select.
-          </Empty>
-        )}
-        {eligible.length > 0 && (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr><th>Candidate</th><th>State</th><th /></tr>
-              </thead>
-              <tbody>
-                {eligible.map((a) => {
-                  const underReview = a.state === "manual_review";
-                  return (
-                    <tr key={a.id}>
-                      <td>{nameOf(a)}</td>
-                      <td><Badge tone={toneFor(a.state)}>{prettify(a.state)}</Badge></td>
-                      <td style={{ textAlign: "right" }}>
-                        {canSelectForInterview ? (
-                          <Button
-                            variant="primary"
-                            small
-                            disabled={selectForInterviewM.isPending}
-                            onClick={() => {
-                              setError(null);
-                              if (underReview) {
-                                // Below the bar -> override requires a reason: open the modal.
-                                setSelectReason("");
-                                setSelectFor(a);
-                              } else {
-                                // Clean/screened -> no reason needed.
-                                selectForInterviewM.mutate({ applicationId: a.id });
-                              }
-                            }}
-                          >
-                            Select for interview
-                          </Button>
-                        ) : (
-                          <span className="subtle"><Lock size={14} aria-hidden="true" className="inline-icon" />Needs interview approve + schedule</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <p className="subtle" style={{ marginTop: 8 }}>
-              Candidates shown here are under the 50% bar or flagged for review. Selecting one for
-              interview records your reason and places them on the Interview Panel tab, alongside the
-              candidates who qualified automatically.
-            </p>
-          </div>
-        )}
-      </Card>
-
-      {/* Override reason modal for selecting a below-threshold candidate. */}
-      {selectFor && (
-        <Modal
-          title="Select candidate for interview"
-          onClose={() => {
-            setSelectFor(null);
-            setSelectReason("");
-          }}
-        >
-          <p className="subtle" style={{ marginTop: 0 }}>
-            <strong>{nameOf(selectFor)}</strong> is under review (below the automatic 50%
-            threshold). Selecting them for interview overrides the screening outcome, so a reason
-            is required and will be recorded in the audit trail.
-          </p>
-          <Field label="Reason for selecting this candidate *" htmlFor="select-reason">
-            <textarea
-              id="select-reason"
-              rows={3}
-              value={selectReason}
-              onChange={(e) => setSelectReason(e.target.value)}
-              placeholder="e.g. Strong relevant project experience not captured by the automated skill match."
-            />
-          </Field>
-          <div className="btn-row" style={{ marginTop: 12, justifyContent: "flex-end" }}>
-            <Button
-              variant="default"
-              onClick={() => {
-                setSelectFor(null);
-                setSelectReason("");
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              disabled={!selectReason.trim() || selectForInterviewM.isPending}
-              onClick={() =>
-                selectForInterviewM.mutate({
-                  applicationId: selectFor.id,
-                  reason: selectReason.trim(),
-                })
-              }
-            >
-              {selectForInterviewM.isPending ? "Selecting…" : "Confirm selection"}
-            </Button>
-          </div>
-        </Modal>
-      )}
-
-      <Card
-        title="Interview invitations"
-        description="Send each candidate a personal link to confirm their interview. Their reply tells the interviewer automatically."
-      >
-        {invites.isLoading && <Loading />}
-        {invites.data && invites.data.length === 0 && <Empty>No invitations yet.</Empty>}
-        {invites.data && invites.data.length > 0 && (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr><th>Candidate</th><th>Status</th><th>Slot</th><th>Attendance</th><th /></tr>
-              </thead>
-              <tbody>
-                {invites.data.map((inv) => {
-                  const app = appById.get(inv.application_id);
-                  return (
-                    <tr key={inv.id}>
-                      <td>{app ? nameOf(app) : inv.application_id.slice(0, 8)}</td>
-                      <td><Badge tone={toneFor(inv.status)}>{prettify(inv.status)}</Badge></td>
-                      <td>
-                        {/* Walk-in interviews are same-day; no manual slot assignment.
-                            "Interview now (walk-in)" places the candidate with the panel
-                            directly, so the Slot column is informational only. */}
-                        {inv.slot_id ? (
-                          <span className="subtle">walk-in</span>
-                        ) : (
-                          <span className="subtle">—</span>
-                        )}
-                      </td>
-                      <td><Badge tone={toneFor(inv.attendance)}>{prettify(inv.attendance)}</Badge></td>
-                      <td style={{ textAlign: "right" }}>
-                        {/* Attendance is recorded by the Interview Panel (on their "My
-                            Assigned Interviews" page), not here. A scheduled candidate is
-                            now with the panel to confirm attendance and assess. */}
-                        {inv.slot_id && inv.attendance === "pending" && (
-                          <span className="subtle">With interview panel</span>
-                        )}
-                        {inv.attendance === "pending" && (
-                          <ConfirmationControls invitationId={inv.id} />
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
 
       <Card
         title="Stages & slots"
@@ -1165,33 +972,15 @@ function InterviewsTab({ campaignId }: { campaignId: string }): ReactNode {
   );
 }
 
-/* Map an application state to a human interview-status label + tone for Recruiter Admin.
-   This lets the recruiter distinguish candidates who are scheduled, in progress (checked in
-   but not yet checked out), and those who actually ATTENDED (checked out = interview
-   completed). Returns null for states before the interview stage so the column stays empty.
-   Legacy ATTENDED/NO_SHOW rows are also surfaced so historical records remain visible. */
-function interviewStatus(state: string): { label: string; tone: "ok" | "warn" | "info" | "neutral" } | null {
-  switch (state) {
-    case "interview_recommended":
-      return { label: "Interview recommended", tone: "info" };
-    case "interview_scheduled":
-      return { label: "Scheduled", tone: "info" };
-    case "checked_in":
-      return { label: "Checked in (in progress)", tone: "warn" };
-    case "assessed":
-      return { label: "Assessed — awaiting check-out", tone: "warn" };
-    case "checked_out":
-      return { label: "Interview attended (completed)", tone: "ok" };
-    case "attended":
-      return { label: "Attended (legacy)", tone: "ok" };
-    case "no_show":
-      return { label: "No-show (legacy)", tone: "neutral" };
-    default:
-      return null;
-  }
-}
-
-function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
+function ApplicationsTab({
+  campaignId,
+  acceptingApplications,
+  onGoToSetup,
+}: {
+  campaignId: string;
+  acceptingApplications: boolean;
+  onGoToSetup: () => void;
+}): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
   const { token, hasPermission, canAccessCampaign } = useAuth();
@@ -1216,6 +1005,11 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
   const [exporting, setExporting] = useState(false);
   // The application whose submitted form-answers modal is open.
   const [formView, setFormView] = useState<Application | null>(null);
+  // Stage strip filter: null = everyone.
+  const [stageFilter, setStageFilter] = useState<StageKey | null>(null);
+  const shownApps = (apps.data ?? []).filter(
+    (a) => stageFilter === null || stageFor(a.state).key === stageFilter,
+  );
 
   async function handleExport(): Promise<void> {
     const authToken = token();
@@ -1258,7 +1052,12 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
 
   return (
     <>
-      <WalkInUploader campaignId={campaignId} canUpload={canScreen} />
+      <WalkInUploader
+        campaignId={campaignId}
+        canUpload={canScreen}
+        acceptingApplications={acceptingApplications}
+        onGoToSetup={onGoToSetup}
+      />
 
       <Card
         title="Applications"
@@ -1317,54 +1116,57 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
         <AccessNote campaignId={campaignId} permission="candidate.view" role="Recruiter / HR" />
         {error && <ErrorNote>{error}</ErrorNote>}
         <p className="subtle" style={{ marginTop: 0 }}>
-          Each submitted application can be screened against the approved rules. Screening is
-          deterministic and never auto-rejects — low-confidence or borderline results are routed to
-          the Review inbox for a person to decide. Open a candidate&rsquo;s{" "}
-          <strong>Resume Score</strong> to inspect evidence and (with permission) contact details,
-          or <strong>View form</strong> to see what the candidate submitted.
+          Every candidate, the stage they are at, and the one thing that has to happen next. The
+          button on each row takes you straight there. Screening never rejects anyone on its own:
+          unclear results go to a person in the Review inbox.
         </p>
         {apps.isLoading && <Loading />}
         {apps.error && <ErrorNote>Could not load applications (you may not be assigned to this campaign).</ErrorNote>}
         {apps.data && apps.data.length === 0 && (
-          <Empty>No applications yet. Share the apply link from the Overview tab.</Empty>
+          <Empty>No applications yet. Share the apply link at the top of this page.</Empty>
         )}
         {apps.data && apps.data.length > 0 && (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Rank</th>
-                  <th>Applicant</th>
-                  <th>Resume Score</th>
-                  <th>Application form</th>
-                  <th>Review status</th>
-                  <th>Interview status</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {apps.data.map((a) => (
-                  <ApplicationRow
-                    key={a.id}
-                    app={a}
-                    canScreen={canScreen}
-                    canDownloadResume={canExport}
-                    onScreened={() => {
-                      void qc.invalidateQueries({ queryKey: ["applications", campaignId] });
-                      toast.push("Screening run completed", { tone: "ok" });
-                    }}
-                    onInspect={(run) => setInspect({ app: a, run })}
-                    onViewForm={() => setFormView(a)}
-                    onError={setError}
-                  />
-                ))}
-              </tbody>
-            </table>
-            <p className="subtle" style={{ marginTop: 8 }}>
-              Ranked by latest screening score within this campaign. Candidates awaiting
-              screening (or whose screening could not score) appear last.
-            </p>
-          </div>
+          <>
+            <StageStrip apps={apps.data} value={stageFilter} onChange={setStageFilter} />
+            {shownApps.length === 0 ? (
+              <Empty>No candidates are at this stage right now.</Empty>
+            ) : (
+              <div className="table-wrap">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>Candidate</th>
+                      <th>Stage</th>
+                      <th>Score</th>
+                      <th>What happens next</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shownApps.map((a) => (
+                      <ApplicationRow
+                        key={a.id}
+                        app={a}
+                        campaignId={campaignId}
+                        canScreen={canScreen}
+                        onScreened={() => {
+                          void qc.invalidateQueries({ queryKey: ["applications", campaignId] });
+                          toast.push("Screening run completed", { tone: "ok" });
+                        }}
+                        onInspect={(run) => setInspect({ app: a, run })}
+                        onViewForm={() => setFormView(a)}
+                        onError={setError}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+                <p className="subtle" style={{ marginTop: 8 }}>
+                  Ranked by screening score. Click a name to open everything about that candidate:
+                  score, interviews, decision and contact details.
+                </p>
+              </div>
+            )}
+          </>
         )}
       </Card>
 
@@ -1389,7 +1191,7 @@ function ApplicationsTab({ campaignId }: { campaignId: string }): ReactNode {
    currency. A dedicated compensation summary surfaces Current Salary and In-Hand Salary
    (and Expected) explicitly, showing "Not provided" when a value is genuinely missing.
    Nothing is computed or fabricated — it simply displays the stored answers. */
-function ApplicationFormModal({ app, onClose }: { app: Application; onClose: () => void }): ReactNode {
+export function ApplicationFormModal({ app, onClose }: { app: Application; onClose: () => void }): ReactNode {
   const answers = app.answers ?? {};
   const entries = Object.entries(answers).filter(([k]) => !HIDDEN_ANSWER_KEYS.has(k));
   const candidateName =
@@ -1447,7 +1249,17 @@ function ApplicationFormModal({ app, onClose }: { app: Application; onClose: () 
 /* Drag-and-drop bulk resume uploader for walk-in drives. Uploads multiple PDF/DOCX files
    through the safe document pipeline; requires a consent attestation and screening.execute
    + campaign assignment (enforced server-side). */
-function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUpload: boolean }): ReactNode {
+function WalkInUploader({
+  campaignId,
+  canUpload,
+  acceptingApplications,
+  onGoToSetup,
+}: {
+  campaignId: string;
+  canUpload: boolean;
+  acceptingApplications: boolean;
+  onGoToSetup: () => void;
+}): ReactNode {
   const toast = useToast();
   const qc = useQueryClient();
   const { token } = useAuth();
@@ -1503,11 +1315,27 @@ function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUplo
       }
     >
       <p className="subtle" style={{ marginTop: 0 }}>
-        Collect many resumes at once at a walk-in drive. Each file is validated, scanned and
-        quarantined. This does not create candidate records or run screening — a candidate&rsquo;s
-        identity and consent are captured before their resume is processed further.
+        Add many resumes at once, for example at a walk-in drive. Each file is checked for safety,
+        then becomes an application and is screened against this job&rsquo;s criteria.
       </p>
-      {open && (
+      {open && !acceptingApplications && (
+        <div className="next-banner" role="status">
+          <div className="next-banner__text">
+            <div>
+              <strong>Open this job first.</strong>
+              <span className="subtle">
+                {" "}
+                Resumes can only be added once the job is open for applications. Finish the setup
+                steps, then come back here.
+              </span>
+            </div>
+          </div>
+          <Button variant="accent" small onClick={onGoToSetup}>
+            Go to setup
+          </Button>
+        </div>
+      )}
+      {open && acceptingApplications && (
         <>
           {error && <ErrorNote>{error}</ErrorNote>}
           <div
@@ -1586,8 +1414,10 @@ function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUplo
                     <tr key={`${r.filename}-${i}`}>
                       <td>{r.filename}</td>
                       <td>
-                        <Badge tone={r.accepted ? "ok" : "danger"}>
-                          {r.accepted ? "Created" : "Rejected"}
+                        {/* "Not added" (never "Rejected"): this is about the FILE, not a
+                            decision about the candidate. */}
+                        <Badge tone={r.accepted ? "ok" : "warn"}>
+                          {r.accepted ? "Added" : "Not added"}
                         </Badge>
                       </td>
                       <td>
@@ -1603,9 +1433,11 @@ function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUplo
                 </tbody>
               </table>
               <p className="subtle" style={{ marginTop: 8 }}>
-                Each resume became an application and was screened. Open a candidate&rsquo;s
-                <strong> Scorecard</strong> in the Applications table below to see the full
-                breakdown. Walk-in candidate names are placeholders — correct them during review.
+                <strong>Added</strong> resumes became applications and were screened: open a
+                candidate&rsquo;s <strong>Scorecard</strong> in the Applications table below for the
+                breakdown. Walk-in names are placeholders, so correct them during review.{" "}
+                <strong>Not added</strong> means the file itself could not be used (see Detail);
+                nothing was decided about the candidate. Fix the issue and upload it again.
               </p>
             </div>
           )}
@@ -1615,30 +1447,77 @@ function WalkInUploader({ campaignId, canUpload }: { campaignId: string; canUplo
   );
 }
 
+/* The stage strip above the candidate table: how many candidates are at each stage, in
+   order. Clicking a stage filters the table; "Everyone" clears it. Each tile pairs the
+   colour with a number and words (never colour alone). */
+function StageStrip({
+  apps,
+  value,
+  onChange,
+}: {
+  apps: RankedApplication[];
+  value: StageKey | null;
+  onChange: (stage: StageKey | null) => void;
+}): ReactNode {
+  const counts = new Map<StageKey, number>();
+  for (const a of apps) {
+    const k = stageFor(a.state).key;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return (
+    <div className="stage-strip" role="group" aria-label="Candidates by stage">
+      <button
+        type="button"
+        className="stage-tile stage-tile--all"
+        aria-pressed={value === null}
+        onClick={() => onChange(null)}
+      >
+        <span className="stage-tile__label">Everyone</span>
+        <span className="stage-tile__count">{apps.length}</span>
+      </button>
+      {STAGES.map((s) => {
+        const n = counts.get(s.key) ?? 0;
+        return (
+          <button
+            key={s.key}
+            type="button"
+            className={`stage-tile stage-tile--${s.tone}${n > 0 && s.tone === "warn" ? " stage-tile--attention" : ""}`}
+            aria-pressed={value === s.key}
+            title={s.hint}
+            onClick={() => onChange(value === s.key ? null : s.key)}
+          >
+            <span className="stage-tile__label">
+              {s.number} · {s.label}
+            </span>
+            <span className="stage-tile__count">{n}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ApplicationRow({
   app,
+  campaignId,
   canScreen,
-  canDownloadResume,
   onScreened,
   onInspect,
   onViewForm,
   onError,
 }: {
   app: RankedApplication;
+  campaignId: string;
   canScreen: boolean;
-  canDownloadResume: boolean;
   onScreened: () => void;
   onInspect: (run: ScreeningRun | null) => void;
   onViewForm: () => void;
   onError: (msg: string) => void;
 }): ReactNode {
-  const { token } = useAuth();
-  const toast = useToast();
   // The list payload already carries the latest-run summary (rank/score/recommendation/
   // review flags) so the table ranks without a per-row fetch. The FULL run (with every
   // criterion) is loaded lazily only when the reviewer opens the scorecard.
   const [loadingCard, setLoadingCard] = useState(false);
-  const [downloadingResume, setDownloadingResume] = useState(false);
 
   const screen = useMutation({
     mutationFn: () => runScreening(app.id),
@@ -1646,36 +1525,6 @@ function ApplicationRow({
     onError: (e) =>
       onError(e instanceof ApiError ? e.message : "Screening failed — is a rule set approved?"),
   });
-
-  // Download this candidate's resume via the authenticated, authorised endpoint, keyed by
-  // the APPLICATION id (not the candidate id) so the correct submission's resume is fetched.
-  // The server enforces candidate.view + campaign assignment and only serves a CLEAN file;
-  // we reuse the shared browser-download pattern and show a friendly message on 404/error.
-  const handleDownloadResume = async (): Promise<void> => {
-    const authToken = token();
-    if (!authToken) return;
-    setDownloadingResume(true);
-    try {
-      const result = await downloadResume(app.id, authToken);
-      if (result === null) {
-        onError("No resume is on file for this candidate, or it is not available to download.");
-        return;
-      }
-      const suffix = result.contentType.includes("pdf")
-        ? "pdf"
-        : result.contentType.includes("word")
-          ? "docx"
-          : result.contentType.includes("text/plain")
-            ? "txt"
-            : "bin";
-      triggerBrowserDownload(result.blob, `resume-${app.id}.${suffix}`);
-      toast.push("Resume downloaded.", { tone: "ok" });
-    } catch (e) {
-      onError(e instanceof Error ? e.message : "Could not download the resume. Please try again.");
-    } finally {
-      setDownloadingResume(false);
-    }
-  };
 
   const openScorecard = async (): Promise<void> => {
     setLoadingCard(true);
@@ -1687,72 +1536,94 @@ function ApplicationRow({
     }
   };
 
-  const name = typeof app.answers["full_name"] === "string" ? (app.answers["full_name"] as string) : "—";
+  const name =
+    typeof app.answers["full_name"] === "string" ? (app.answers["full_name"] as string) : "Candidate";
   const hasRun = Boolean(app.latest_run_id);
+  const stage = stageFor(app.state);
+  const next = nextStepFor(app.state, { hasRun });
+  const toCandidate = candidatePath(campaignId, app.id);
+
+  let primary: ReactNode = null;
+  if (next.target.kind === "screen") {
+    primary = (
+      <Button
+        variant="accent"
+        small
+        disabled={!canScreen || screen.isPending}
+        title={canScreen ? undefined : "Running screening needs the Recruiter role and campaign assignment"}
+        onClick={() => screen.mutate()}
+      >
+        {screen.isPending ? "Screening…" : next.cta}
+      </Button>
+    );
+  } else if (next.target.kind === "page") {
+    primary = (
+      <Link className="btn btn--accent btn--sm" to={next.target.to}>
+        {next.cta} →
+      </Link>
+    );
+  } else if (next.target.kind === "candidate") {
+    primary = (
+      <Link className="btn btn--accent btn--sm" to={candidatePath(campaignId, app.id, next.target.section)}>
+        {next.cta} →
+      </Link>
+    );
+  }
 
   return (
     <tr>
-      <td>{app.rank != null ? <strong>#{app.rank}</strong> : <span className="subtle">—</span>}</td>
-      <td>{name}</td>
+      <td>
+        <Link to={toCandidate} className="cand-link">
+          {name}
+        </Link>
+        {app.rank != null && <div className="subtle">Rank #{app.rank}</div>}
+      </td>
+      <td>
+        <Badge tone={stage.tone}>
+          {stage.number} · {stage.label}
+        </Badge>
+        {stateLabel(app.state) !== stage.label && <div className="subtle">{stateLabel(app.state)}</div>}
+      </td>
       <td>
         {app.scored && app.score != null ? (
           <strong>{Math.round(app.score)}/100</strong>
         ) : (
-          <span className="subtle">{hasRun ? "Unable to score" : "Awaiting screening"}</span>
+          <span className="subtle">{hasRun ? "Could not score" : "Not screened"}</span>
         )}
       </td>
-      <td>
-        <Button variant="default" small onClick={onViewForm}>
-          View form
-        </Button>
-      </td>
-      <td>
-        {app.manual_review_required ? (
-          <Badge tone="warn">Manual review</Badge>
-        ) : hasRun ? (
-          <Badge tone="ok">Cleared</Badge>
-        ) : (
-          <span className="subtle">—</span>
-        )}
-      </td>
-      <td>
-        {(() => {
-          const status = interviewStatus(app.state);
-          return status ? <Badge tone={status.tone}>{status.label}</Badge> : <span className="subtle">—</span>;
-        })()}
+      <td style={{ maxWidth: 340 }}>
+        {next.text}
+        {next.who !== "—" && <div className="subtle">Who: {next.who}</div>}
       </td>
       <td style={{ textAlign: "right" }}>
         <div className="btn-row" style={{ justifyContent: "flex-end" }}>
-          {canDownloadResume && (
-            <Button
-              variant="default"
-              small
-              disabled={downloadingResume}
-              title="Download this candidate's uploaded resume. Served securely; requires the Recruiter/HR role and campaign assignment."
-              onClick={() => void handleDownloadResume()}
-            >
-              {downloadingResume ? "Downloading…" : "⤓ Resume"}
-            </Button>
-          )}
-          <JourneyButton applicationId={app.id} />
+          {primary}
+          <Link className="btn btn--sm" to={toCandidate}>
+            Open
+          </Link>
           <Button
-            variant="default"
+            variant="ghost"
             small
             disabled={loadingCard}
             title="See the score and the evidence behind each part of it"
             onClick={() => void openScorecard()}
           >
-            {loadingCard ? "Opening…" : "Resume Score"}
+            {loadingCard ? "Opening…" : "Scorecard"}
           </Button>
-          <Button
-            variant="accent"
-            small
-            disabled={!canScreen || screen.isPending}
-            title={canScreen ? undefined : "Running screening needs the Recruiter role and campaign assignment"}
-            onClick={() => screen.mutate()}
-          >
-            {screen.isPending ? "Screening…" : hasRun ? "Re-run" : "Run screening"}
+          <Button variant="ghost" small onClick={onViewForm} title="What the candidate submitted">
+            Form
           </Button>
+          {hasRun && canScreen && (
+            <Button
+              variant="ghost"
+              small
+              disabled={screen.isPending}
+              title="Run screening again with the current criteria (earlier results are kept)"
+              onClick={() => screen.mutate()}
+            >
+              {screen.isPending ? "Screening…" : "Re-screen"}
+            </Button>
+          )}
         </div>
       </td>
     </tr>

@@ -8,18 +8,20 @@
 
 from __future__ import annotations
 
+import os
 import uuid
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_actor, settings_dep
 from app.core.config import Settings
+from app.core.errors import ValidationError
 from app.db.session import get_db
-from app.modules.ai_interviews import service
+from app.modules.ai_interviews import recording, service
 from app.modules.ai_interviews.agent_client import InterviewAgentClient, build_agent_client
-from app.modules.ai_interviews.models import AiInterviewSession
+from app.modules.ai_interviews.models import AiInterviewRecording, AiInterviewSession
 from app.modules.ai_interviews.schemas import (
     AiInterviewRead,
     ApproveRequest,
@@ -29,11 +31,16 @@ from app.modules.ai_interviews.schemas import (
     PublicStartResponse,
     PublicTokenRequest,
     QuestionRead,
+    RecordingChunkResult,
+    RecordingPlaybackRead,
+    RecordingRead,
+    RecordingTokenRequest,
     RetryRequest,
     TranscriptRead,
     TranscriptTurnRead,
 )
 from app.modules.applications import service as application_service
+from app.modules.documents.storage import ObjectStore, default_object_store
 from app.modules.identity.permissions import Permission
 from app.modules.identity.policy import require_campaign_permission
 from app.modules.identity.schemas import AuthenticatedActor
@@ -43,6 +50,12 @@ router = APIRouter(prefix="/api/v1/ai-interviews", tags=["ai-interviews"])
 
 def get_agent_client(settings: Settings = Depends(settings_dep)) -> InterviewAgentClient:
     return build_agent_client(settings)
+
+
+def get_object_store() -> ObjectStore:
+    """Where video evidence is kept (private S3 in AWS, local disk in dev). Overridable in
+    tests."""
+    return default_object_store
 
 
 def _read(row: AiInterviewSession) -> AiInterviewRead:
@@ -228,6 +241,93 @@ def get_transcript(
     return TranscriptRead(session_id=row.id, turns=turns)
 
 
+def _recording_read(row: AiInterviewRecording) -> RecordingRead:
+    return RecordingRead(
+        id=row.id,
+        session_id=row.session_id,
+        attempt_start=row.attempt_start,
+        status=row.status,
+        content_type=row.content_type,
+        bytes_total=row.bytes_total,
+        consent_given_at=row.consent_given_at,
+        finished_at=row.finished_at,
+        delete_after=row.delete_after,
+        created_at=row.created_at,
+    )
+
+
+@router.get("/sessions/{session_id}/recordings", response_model=list[RecordingRead])
+def list_session_recordings(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> list[RecordingRead]:
+    """Video evidence for one interview (metadata only). Requires candidate.view_pii."""
+    row = service.get_session(db, organisation_id=actor.organisation_id, session_id=session_id)
+    require_campaign_permission(actor, Permission.CANDIDATE_VIEW_PII, row.campaign_id)
+    rows = recording.list_recordings(
+        db, organisation_id=actor.organisation_id, session_id=session_id
+    )
+    return [_recording_read(r) for r in rows]
+
+
+def _authorised_recording(
+    db: Session, actor: AuthenticatedActor, recording_id: uuid.UUID
+) -> AiInterviewRecording:
+    rec = recording.get_recording(
+        db, organisation_id=actor.organisation_id, recording_id=recording_id
+    )
+    # Object-level check against the recording's own campaign (not a caller-supplied id).
+    require_campaign_permission(actor, Permission.CANDIDATE_VIEW_PII, rec.campaign_id)
+    return rec
+
+
+@router.get("/recordings/{recording_id}/playback", response_model=RecordingPlaybackRead)
+def recording_playback(
+    recording_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+    store: ObjectStore = Depends(get_object_store),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> RecordingPlaybackRead:
+    """How to play the video. Requires candidate.view_pii; viewing is audited.
+
+    With S3, returns a short-lived signed GET link (serverless responses are too small to
+    carry video). Otherwise returns no URL and the client uses ``/stream``, which audits."""
+    rec = _authorised_recording(db, actor, recording_id)
+    presign = getattr(store, "presigned_get_url", None)
+    if presign is None:
+        return RecordingPlaybackRead(content_type=rec.content_type)
+    key = recording.prepare_playback(db, store=store, actor=actor, row=rec)
+    ttl = settings.signed_url_ttl_seconds
+    return RecordingPlaybackRead(
+        url=presign(key, rec.content_type, ttl),
+        content_type=rec.content_type,
+        expires_in_seconds=ttl,
+    )
+
+
+@router.get("/recordings/{recording_id}/stream")
+def recording_stream(
+    recording_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    store: ObjectStore = Depends(get_object_store),
+    actor: AuthenticatedActor = Depends(get_current_actor),
+) -> Response:
+    """The video bytes (local storage). Requires candidate.view_pii; viewing is audited."""
+    rec = _authorised_recording(db, actor, recording_id)
+    key = recording.prepare_playback(db, store=store, actor=actor, row=rec)
+    return Response(
+        content=store.get(key),
+        media_type=rec.content_type,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 # ------------------------------------------------------------------ candidate (public)
 
 
@@ -239,12 +339,16 @@ def public_preview(
 ) -> PublicPreviewResponse:
     """What the candidate sees before consenting. Exposes only the role title and the notice."""
     row = service.public_preview(db, settings=settings, token=payload.token)
+    offered = recording.video_enabled(settings)
     return PublicPreviewResponse(
         role_title=row.role_title,
         status=row.status,
         notice_version=service.NOTICE_VERSION,
         notice_text=service.NOTICE_TEXT,
         max_minutes=30,
+        video_recording_offered=offered,
+        video_notice_version=recording.VIDEO_NOTICE_VERSION if offered else None,
+        video_notice_text=recording.video_notice_text(settings) if offered else None,
     )
 
 
@@ -256,15 +360,98 @@ def public_start(
     client: InterviewAgentClient = Depends(get_agent_client),
 ) -> PublicStartResponse:
     """Record consent, prepare the agent, and return how the browser connects to it."""
-    row, join_token, ws_url = service.public_start(
+    row, join_token, ws_url, recording_token = service.public_start(
         db,
         settings=settings,
         client=client,
         token=payload.token,
         consent=payload.consent,
         notice_version=payload.notice_version,
+        video_consent=payload.video_consent,
+        video_notice_version=payload.video_notice_version,
     )
-    return PublicStartResponse(interview_id=row.id, ws_url=ws_url, join_token=join_token)
+    return PublicStartResponse(
+        interview_id=row.id,
+        ws_url=ws_url,
+        join_token=join_token,
+        recording_token=recording_token,
+        recording_max_chunk_bytes=(
+            settings.ai_interview_video_max_chunk_bytes if recording_token else None
+        ),
+    )
+
+
+# Fixed random bytes (not compressible, so the measured speed is real). Made once per process.
+_SPEED_SAMPLE = os.urandom(256 * 1024)
+_SPEED_UPLOAD_LIMIT = 512 * 1024
+
+
+@router.get("/public/network-check")
+def network_check(size: Literal["ping", "sample"] = "ping") -> Response:
+    """Pre-interview connection check (public, no data). ``ping`` measures delay; ``sample``
+    returns 256 KB to time the download. Responses are never cached."""
+    body = b"ok" if size == "ping" else _SPEED_SAMPLE
+    return Response(
+        content=body,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/public/network-check")
+async def network_check_upload(request: Request) -> dict[str, int]:
+    """Times an upload: reads up to 512 KB and discards it. Nothing is stored."""
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > _SPEED_UPLOAD_LIMIT:
+        raise ValidationError("Sample too large.")
+    received = 0
+    async for part in request.stream():
+        received += len(part)
+        if received > _SPEED_UPLOAD_LIMIT:
+            raise ValidationError("Sample too large.")
+    return {"received": received}
+
+
+@router.post("/public/recording/chunk", response_model=RecordingChunkResult)
+async def upload_recording_chunk(
+    request: Request,
+    seq: int = Query(ge=0, lt=recording.MAX_CHUNKS),
+    x_recording_token: str = Header(default="", max_length=200),
+    content_type: str = Header(default=""),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+    store: ObjectStore = Depends(get_object_store),
+) -> RecordingChunkResult:
+    """One ~10 s piece of the candidate's video evidence (raw WebM/MP4 bytes in the body).
+
+    Public, authorised only by the per-recording upload token in a header (never the URL, so
+    it stays out of access logs). The body size is checked before it is read in full."""
+    declared = request.headers.get("content-length")
+    limit = settings.ai_interview_video_max_chunk_bytes
+    if declared is not None and declared.isdigit() and int(declared) > limit:
+        raise ValidationError("Chunk too large.")
+    data = await request.body()
+    row = recording.store_chunk(
+        db,
+        settings=settings,
+        store=store,
+        token=x_recording_token,
+        seq=seq,
+        data=data,
+        content_type=content_type,
+    )
+    return RecordingChunkResult(chunk_count=row.chunk_count)
+
+
+@router.post("/public/recording/finish", response_model=RecordingChunkResult)
+def finish_recording(
+    payload: RecordingTokenRequest,
+    db: Session = Depends(get_db),
+    store: ObjectStore = Depends(get_object_store),
+) -> RecordingChunkResult:
+    """The browser stopped recording; the upload token stops working."""
+    row = recording.finish_recording(db, store=store, token=payload.recording_token)
+    return RecordingChunkResult(chunk_count=row.chunk_count)
 
 
 # ------------------------------------------------------------------ agent webhook

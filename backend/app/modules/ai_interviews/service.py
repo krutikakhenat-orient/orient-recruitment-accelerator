@@ -40,6 +40,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.modules.ai_interviews import recording
 from app.modules.ai_interviews.agent_client import (
     AgentUnavailableError,
     InterviewAgentClient,
@@ -599,8 +600,12 @@ def public_start(
     token: str,
     consent: bool,
     notice_version: str,
-) -> tuple[AiInterviewSession, str, str]:
-    """Record consent, prime the agent, and return (session, join_token, ws_url)."""
+    video_consent: bool = False,
+    video_notice_version: str | None = None,
+) -> tuple[AiInterviewSession, str, str, str | None]:
+    """Record consent, prime the agent, and return (session, join_token, ws_url,
+    recording_upload_token). The upload token is None unless video evidence is enabled AND
+    the candidate gave the separate video consent; declining never blocks the interview."""
     require_enabled(settings)
     row = _row_for_token(db, token)
     if not consent:
@@ -646,7 +651,13 @@ def public_start(
             security_context="candidate_consent",
         ),
     )
-    return row, join_token, ws_url
+
+    recording_token: str | None = None
+    if video_consent and recording.video_enabled(settings):
+        if video_notice_version != recording.VIDEO_NOTICE_VERSION:
+            raise ValidationError("The video notice has changed. Please reload the page.")
+        _rec, recording_token = recording.start_recording(db, settings=settings, session=row)
+    return row, join_token, ws_url, recording_token
 
 
 # --------------------------------------------------------------------------- agent webhook

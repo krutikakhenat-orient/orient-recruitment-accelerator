@@ -103,6 +103,20 @@ class Settings(BaseSettings):
     ai_interview_max_attempts: int = 3
     ai_interview_agent_timeout_seconds: int = 60
 
+    # --- AI interview video evidence (off by default) ---
+    # Records the candidate's camera during the voice interview as EVIDENCE ONLY for a human
+    # reviewer. Nothing analyses the video (no face, emotion, gaze or appearance processing;
+    # responsible-ai.md). It needs a separate, explicit consent and the candidate can decline
+    # and still take the voice interview. Viewing needs candidate.view_pii and is audited.
+    ai_interview_video_enabled: bool = False
+    ai_interview_video_retention_days: int = 30
+    # One upload is ~10 s of 480p video (~0.7 MB). The cap keeps a single request well under
+    # the serverless payload limit (6 MB, base64-encoded by API Gateway).
+    ai_interview_video_max_chunk_bytes: int = 3_000_000
+    ai_interview_video_max_total_bytes: int = 400_000_000
+    # How long the browser's upload token works after the interview starts.
+    ai_interview_video_upload_window_seconds: int = 2 * 60 * 60
+
     # --- Notifications (email / WhatsApp) ---
     # Every channel is "unconfigured" by default so the product never claims a message was
     # sent when no provider exists. Modes:

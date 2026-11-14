@@ -11,7 +11,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import FastAPI, Request, WebSocket
@@ -21,9 +21,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import Settings, get_settings
 from .models import PlanQuestionsRequest, PrepareSessionRequest, QuestionSet
+from .observability import init_observability
 from .orchestrator import InterviewOrchestrator
 from .runtime import Runtime, build_runtime
 from .session import VoiceSession
+
+if TYPE_CHECKING:
+    from .voice.session import PipecatVoiceSession
 
 log = logging.getLogger("interview_agent")
 
@@ -90,6 +94,8 @@ def _error(status: int, code: str, message: str, correlation_id: str) -> JSONRes
 def create_app(settings: Settings | None = None, runtime: Runtime | None = None) -> FastAPI:
     settings = settings or get_settings()
     rt = runtime or build_runtime(settings)
+    tracing_mode = init_observability(settings)
+    log.info("observability_ready", extra={"tracing": tracing_mode, "engine": settings.voice_engine})
     app = FastAPI(title="Interview Agent", docs_url=None, redoc_url=None, openapi_url=None)
     started = int(time.time())
 
@@ -169,15 +175,30 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
                 "text_input": settings.allow_text_input,
             }
         )
-        session = VoiceSession(
-            orchestrator=orchestrator,
-            summariser=rt.summariser,
-            stt=rt.stt,
-            tts=rt.tts,
-            transport=WebSocketTransport(websocket),
-            sink=rt.sink,
-            settings=settings,
-        )
+        session: VoiceSession | PipecatVoiceSession
+        if settings.voice_engine == "pipecat":
+            # Imported here so the legacy engine (and tools that only plan questions) do not
+            # load Pipecat and its models.
+            from .voice.session import PipecatVoiceSession
+
+            session = PipecatVoiceSession(
+                websocket=websocket,
+                orchestrator=orchestrator,
+                summariser=rt.summariser,
+                tts=rt.tts,
+                sink=rt.sink,
+                settings=settings,
+            )
+        else:
+            session = VoiceSession(
+                orchestrator=orchestrator,
+                summariser=rt.summariser,
+                stt=rt.stt,
+                tts=rt.tts,
+                transport=WebSocketTransport(websocket),
+                sink=rt.sink,
+                settings=settings,
+            )
         try:
             await session.run()
         except Exception as exc:  # noqa: BLE001 - reported to client without detail, logged by type

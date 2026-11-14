@@ -135,18 +135,61 @@ class PublicPreviewResponse(BaseModel):
     notice_text: str
     max_minutes: int
     text_input_allowed: bool = True
+    # Video evidence: offered only when enabled. Declining never blocks the interview.
+    video_recording_offered: bool = False
+    video_notice_version: str | None = None
+    video_notice_text: str | None = None
 
 
 class PublicStartRequest(_Strict):
     token: Annotated[str, StringConstraints(min_length=20, max_length=200)]
     consent: bool
     notice_version: Annotated[str, StringConstraints(max_length=40)]
+    # Separate, explicit consent to video evidence (default: no video).
+    video_consent: bool = False
+    video_notice_version: Annotated[str, StringConstraints(max_length=40)] | None = None
 
 
 class PublicStartResponse(BaseModel):
     interview_id: uuid.UUID
     ws_url: str
     join_token: str
+    # Present only when the candidate agreed to video evidence. Authorises uploading this
+    # attempt's recording, nothing else; it expires and stops working when the upload ends.
+    recording_token: str | None = None
+    recording_max_chunk_bytes: int | None = None
+
+
+class RecordingTokenRequest(_Strict):
+    recording_token: Annotated[str, StringConstraints(min_length=20, max_length=200)]
+
+
+class RecordingChunkResult(BaseModel):
+    received: bool = True
+    chunk_count: int
+
+
+class RecordingRead(BaseModel):
+    """Recording metadata for staff. The video itself is only reachable via playback."""
+
+    id: uuid.UUID
+    session_id: uuid.UUID
+    attempt_start: int
+    status: str
+    content_type: str
+    bytes_total: int
+    consent_given_at: dt.datetime
+    finished_at: dt.datetime | None = None
+    delete_after: dt.datetime
+    created_at: dt.datetime
+
+
+class RecordingPlaybackRead(BaseModel):
+    # A short-lived signed link when the storage supports it (S3). Otherwise None, and the
+    # client plays from the authenticated stream endpoint instead.
+    url: str | None = None
+    content_type: str
+    expires_in_seconds: int | None = None
 
 
 # --------------------------------------------------------------- agent -> HR webhook
