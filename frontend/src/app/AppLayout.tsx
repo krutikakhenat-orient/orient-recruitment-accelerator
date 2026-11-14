@@ -124,6 +124,7 @@ const TITLES: Record<string, string> = {
   "/waitlist": "Waitlist",
   "/offers": "Offers & joining",
   "/policies": "Policies & guides",
+  "/ask-hr": "Ask HR",
   "/integrations": "Connections & messages",
   "/audit": "Audit log",
 };

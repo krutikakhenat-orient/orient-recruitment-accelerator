@@ -105,7 +105,9 @@ def main() -> None:
         print("[run_local] Synthetic data seeded.")
     except Exception as exc:  # noqa: BLE001 - seeding is best-effort for local dev
         print(f"[run_local] Seed skipped/failed (continuing): {exc}")
-    print("[run_local] Starting API at http://localhost:8000 (docs at /docs)")
+    # ORA_LOCAL_PORT lets a second checkout (e.g. a git worktree) run beside the main one.
+    port = int(os.environ.get("ORA_LOCAL_PORT", "8000"))
+    print(f"[run_local] Starting API at http://localhost:{port} (docs at /docs)")
     # Auto-reload on source changes so the local server never silently serves STALE code.
     # Without this, editing a router/schema (e.g. adding `role_names` to GET /users) has no
     # effect until the process is manually killed and restarted — which previously left the
@@ -114,7 +116,7 @@ def main() -> None:
     uvicorn.run(
         "app.main:app",
         host="127.0.0.1",
-        port=8000,
+        port=port,
         reload=True,
         reload_dirs=[str(pathlib.Path(__file__).resolve().parent / "app")],
     )

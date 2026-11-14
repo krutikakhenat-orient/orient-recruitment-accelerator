@@ -29,6 +29,7 @@ from app.modules.ai_interviews.router import router as ai_interviews_router
 from app.modules.applications.router import public_router as applications_public_router
 from app.modules.applications.router import router as applications_router
 from app.modules.assessments.router import router as assessments_router
+from app.modules.assistant.router import assistant_router
 from app.modules.audit.router import router as audit_router
 from app.modules.campaigns.router import router as campaigns_router
 from app.modules.candidates.router import router as candidates_router
@@ -36,6 +37,7 @@ from app.modules.decisions.router import router as decisions_router
 from app.modules.dev.router import router as dev_router
 from app.modules.documents.router import router as documents_router
 from app.modules.forms.router import router as forms_router
+from app.modules.hr_questions.router import router as hr_questions_router
 from app.modules.identity.router import router as identity_router
 from app.modules.induction.router import router as induction_router
 from app.modules.integrations.router import router as integrations_router
@@ -46,7 +48,6 @@ from app.modules.journey.router import router as journey_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.onboarding.router import offers_router
 from app.modules.onboarding.router import router as onboarding_router
-from app.modules.policies.router import assistant_router
 from app.modules.policies.router import router as policies_router
 from app.modules.privacy.router import router as privacy_router
 from app.modules.projects.router import router as projects_router
@@ -245,6 +246,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(onboarding_router)
     app.include_router(policies_router)
     app.include_router(assistant_router)
+    app.include_router(hr_questions_router)
     app.include_router(interview_confirmations_router)
     app.include_router(integrations_router)
     app.include_router(journey_router)

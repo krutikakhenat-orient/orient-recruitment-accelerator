@@ -227,7 +227,8 @@ export function Drawer({
 }): ReactNode {
   return (
     <div className="drawer-overlay" onClick={onClose} role="presentation">
-      <aside
+      {/* A div, not <aside>: ARIA does not allow role="dialog" on <aside> (axe aria-allowed-role). */}
+      <div
         className="drawer"
         role="dialog"
         aria-modal="true"
@@ -245,7 +246,7 @@ export function Drawer({
         </div>
         <div className="drawer__body">{children}</div>
         {footer && <div className="drawer__foot">{footer}</div>}
-      </aside>
+      </div>
     </div>
   );
 }

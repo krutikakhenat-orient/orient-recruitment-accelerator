@@ -51,6 +51,13 @@ class ConflictError(AppError):
     code = "conflict"
 
 
+class RateLimitedError(AppError):
+    """Too many requests from one user or client address in the current window."""
+
+    status_code = 429
+    code = "rate_limited"
+
+
 class SeparationOfDutiesError(PermissionDeniedError):
     """Raised when an actor would violate a separation-of-duties control."""
 

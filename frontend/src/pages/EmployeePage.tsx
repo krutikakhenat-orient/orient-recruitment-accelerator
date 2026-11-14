@@ -30,10 +30,12 @@ import { AssistantBox, PolicyLibrary } from "./PoliciesPage";
         <video src> cannot authenticate). Completing the video records the completion.
      2. "Certificate" — locked until the induction is marked complete, then unlocks a button
         that fetches the certificate HTML and opens it in a new tab for viewing/printing. */
-export function EmployeePage(): ReactNode {
+export function EmployeePage({
+  initialTab = "induction",
+}: { initialTab?: "induction" | "policies" | "ask" } = {}): ReactNode {
   const { token } = useAuth();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState("induction");
+  const [tab, setTab] = useState<string>(initialTab);
 
   const status = useQuery({ queryKey: ["induction-status"], queryFn: getInductionStatus });
 

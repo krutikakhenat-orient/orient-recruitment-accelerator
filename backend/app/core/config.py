@@ -117,6 +117,43 @@ class Settings(BaseSettings):
     # How long the browser's upload token works after the interview starts.
     ai_interview_video_upload_window_seconds: int = 2 * 60 * 60
 
+    # --- HR policy chatbot (Bedrock Knowledge Base; off by default) ---
+    # The keyword assistant always works. "bedrock_kb" is used only when the chatbot is
+    # enabled AND the KB settings below are present; otherwise answers fall back to keyword.
+    # Answers are information from approved policy only and never drive an HR decision.
+    hr_chatbot_enabled: bool = False
+    hr_chatbot_backend: str = "keyword"  # "keyword" | "bedrock_kb"
+    kb_id: str | None = None
+    kb_data_source_id: str | None = None
+    # Private Docs Bucket holding quarantine/, draft/ and approved/ (approved/ is the only
+    # KB data source). When unset, policy files use the default object store.
+    kb_docs_bucket: str | None = None
+    kb_region: str = "ap-south-1"
+    # Generation model for Bedrock Converse. Default: gpt-oss-20b, on demand in ap-south-1
+    # (stays in Mumbai; verified to answer with citations and ignore injected instructions).
+    hr_chatbot_model_id: str | None = "openai.gpt-oss-20b-1:0"
+    guardrail_id: str | None = None
+    guardrail_version: str = "DRAFT"
+    # Minimum Bedrock retrieval score (0..1) for a passage to be used in an answer. Phase 0
+    # trial (Titan Embed V2, S3 Vectors, cosine): relevant passages 0.73-0.85, unrelated
+    # 0.49-0.60. Retune with the real policy set (tasks.md 7.4).
+    chatbot_min_score: float = Field(default=0.65, ge=0.0, le=1.0)
+    chatbot_top_k: int = Field(default=5, ge=1, le=20)
+    # Per-user and per-client-address limit on /assistant/ask (requests per minute).
+    chatbot_rate_limit_per_minute: int = Field(default=20, ge=1, le=600)
+    # Policy upload size cap (bytes). Cannot exceed the shared upload validator's 10 MiB cap.
+    upload_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
+
+    @property
+    def bedrock_kb_active(self) -> bool:
+        """True only when the chatbot is on, set to Bedrock, and fully configured."""
+        return (
+            self.hr_chatbot_enabled
+            and self.hr_chatbot_backend == "bedrock_kb"
+            and bool(self.kb_id and self.kb_data_source_id and self.kb_docs_bucket)
+            and bool(self.hr_chatbot_model_id)
+        )
+
     # --- Notifications (email / WhatsApp) ---
     # Every channel is "unconfigured" by default so the product never claims a message was
     # sent when no provider exists. Modes:
@@ -146,6 +183,26 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
+    @field_validator("hr_chatbot_backend")
+    @classmethod
+    def _check_chatbot_backend(cls, value: str) -> str:
+        if value not in {"keyword", "bedrock_kb"}:
+            raise ValueError("ORA_HR_CHATBOT_BACKEND must be 'keyword' or 'bedrock_kb'")
+        return value
+
+    def chatbot_config_problems(self) -> list[str]:
+        """Missing settings when the Bedrock chatbot is switched on (checked at startup)."""
+        if not (self.hr_chatbot_enabled and self.hr_chatbot_backend == "bedrock_kb"):
+            return []
+        required = {
+            "ORA_KB_ID": self.kb_id,
+            "ORA_KB_DATA_SOURCE_ID": self.kb_data_source_id,
+            "ORA_KB_DOCS_BUCKET": self.kb_docs_bucket,
+            "ORA_HR_CHATBOT_MODEL_ID": self.hr_chatbot_model_id,
+        }
+        return [f"{name} must be set when ORA_HR_CHATBOT_BACKEND=bedrock_kb."
+                for name, value in required.items() if not value]
+
     @property
     def is_production_like(self) -> bool:
         return self.environment in {Environment.STAGING, Environment.PRODUCTION}
@@ -154,7 +211,7 @@ class Settings(BaseSettings):
         """Fail fast if insecure defaults are used in production-like environments."""
         if not self.is_production_like:
             return
-        problems: list[str] = []
+        problems: list[str] = list(self.chatbot_config_problems())
         if self.jwt_secret == _DEV_ONLY_SECRET or len(self.jwt_secret) < 32:
             problems.append("ORA_JWT_SECRET must be a strong, non-default value (>=32 chars).")
         if any("localhost" in origin for origin in self.cors_allowed_origins):

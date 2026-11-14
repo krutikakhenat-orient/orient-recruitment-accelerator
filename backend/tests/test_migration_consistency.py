@@ -88,6 +88,10 @@ def test_model_tables_present() -> None:
         "policy_acknowledgement",
         "assistant_query_log",
         "interview_confirmation_link",
+        # HR policy chatbot (migration 0014)
+        "kb_sync_request",
+        "assistant_feedback",
+        "hr_question",
     }
     assert expected == _model_table_names()
 

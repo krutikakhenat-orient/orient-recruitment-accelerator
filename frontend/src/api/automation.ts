@@ -5,7 +5,7 @@
 
 import { z } from "zod";
 
-import { apiFetch } from "./client";
+import { apiFetch, apiUpload, getAccessToken } from "./client";
 
 const id = z.string();
 const post = (body?: unknown): RequestInit => ({
@@ -286,6 +286,9 @@ export const getHrmsPreview = (caseId: string) =>
 
 // ------------------------------------------------------- policies + assistant
 
+export const indexStatusValue = z.enum(["not_indexed", "indexing", "ready", "failed"]);
+export type IndexStatusValue = z.infer<typeof indexStatusValue>;
+
 export const policy = z.object({
   id,
   family_id: id,
@@ -296,20 +299,100 @@ export const policy = z.object({
   version: z.number(),
   status: z.string(),
   effective_date: z.string().nullable(),
+  review_due_date: z.string().nullable().default(null),
   updated_at: z.string(),
+  audience: z.array(z.string()).default(["everyone"]),
+  index_status: indexStatusValue.default("not_indexed"),
+  index_error: z.string().nullable().default(null),
+  indexed_at: z.string().nullable().default(null),
+  source_filename: z.string().nullable().default(null),
+  has_file: z.boolean().default(false),
   acknowledged: z.boolean(),
   acknowledgement_count: z.number(),
 });
 export type Policy = z.infer<typeof policy>;
+export type PolicyKind = "policy" | "sop" | "faq";
 export const listPolicies = () => apiFetch("/api/v1/policies", z.array(policy));
 export const createPolicy = (body: {
   title: string;
-  kind: "policy" | "sop";
+  kind: PolicyKind;
   department?: string;
   body: string;
+  audience?: string[];
+  review_due_date?: string;
 }) => apiFetch("/api/v1/policies", policy, post(body));
-export const updatePolicy = (policyId: string, body: { title?: string; body?: string; department?: string }) =>
+export const updatePolicy = (
+  policyId: string,
+  body: {
+    title?: string;
+    body?: string;
+    department?: string;
+    audience?: string[];
+    review_due_date?: string | null;
+  },
+) =>
   apiFetch(`/api/v1/policies/${policyId}`, policy, { method: "PUT", body: JSON.stringify(body) });
+
+export interface PolicyUpload {
+  file: File;
+  title: string;
+  kind: PolicyKind;
+  department?: string;
+  audience?: string[];
+  reviewDueDate?: string;
+  confirmDuplicate?: boolean;
+}
+export const uploadPolicy = (u: PolicyUpload) => {
+  const form = new FormData();
+  form.append("file", u.file);
+  form.append("title", u.title);
+  form.append("kind", u.kind);
+  if (u.department) form.append("department", u.department);
+  if (u.audience && u.audience.length) form.append("audience", u.audience.join(","));
+  if (u.reviewDueDate) form.append("review_due_date", u.reviewDueDate);
+  if (u.confirmDuplicate) form.append("confirm_duplicate", "true");
+  return apiUpload("/api/v1/policies/upload", policy, form);
+};
+export const replacePolicyFile = (policyId: string, file: File, confirmDuplicate = false) => {
+  const form = new FormData();
+  form.append("file", file);
+  if (confirmDuplicate) form.append("confirm_duplicate", "true");
+  return apiUpload(`/api/v1/policies/${policyId}/file`, policy, form);
+};
+export const reindexPolicy = (policyId: string) =>
+  apiFetch(`/api/v1/policies/${policyId}/reindex`, policy, post());
+export const indexStatusRead = z.object({
+  policy_id: id,
+  status: z.string(),
+  index_status: indexStatusValue,
+  index_error: z.string().nullable(),
+  indexed_at: z.string().nullable(),
+  ingestion_job_id: z.string().nullable(),
+  backend: z.string(),
+});
+export const getIndexStatus = (policyId: string) =>
+  apiFetch(`/api/v1/policies/${policyId}/index-status`, indexStatusRead);
+export const getOriginalLink = (policyId: string) =>
+  apiFetch(
+    `/api/v1/policies/${policyId}/original-link`,
+    z.object({ url: z.string().nullable(), expires_in: z.number().nullable() }),
+  );
+/* "Open original": a short-lived signed link when the server has one (S3), otherwise the
+   file is fetched with the session token and saved; it is never rendered in the page. */
+export async function downloadPolicyOriginal(policyId: string): Promise<{ blob: Blob; filename: string }> {
+  const token = getAccessToken();
+  const resp = await fetch(`/api/v1/policies/${policyId}/original`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!resp.ok) throw new Error(`The file could not be downloaded (${resp.status}).`);
+  const disposition = resp.headers.get("Content-Disposition") ?? "";
+  const match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const filename = match?.[1] ? decodeURIComponent(match[1]) : "policy";
+  return { blob: await resp.blob(), filename };
+}
+export const duplicatesDetail = z.object({
+  duplicates: z.array(z.object({ id, title: z.string(), version: z.number(), status: z.string() })),
+});
 export const approvePolicy = (policyId: string) =>
   apiFetch(`/api/v1/policies/${policyId}/approve`, policy, post());
 export const retirePolicy = (policyId: string) =>
@@ -319,21 +402,104 @@ export const revisePolicy = (policyId: string) =>
 export const acknowledgePolicy = (policyId: string) =>
   apiFetch(`/api/v1/policies/${policyId}/acknowledge`, policy, post());
 
+export const answerSource = z.object({
+  ref: z.number().default(1),
+  policy_id: id,
+  title: z.string(),
+  version: z.number(),
+  page: z.number().nullable().default(null),
+  excerpt: z.string().default(""),
+});
+export type AnswerSource = z.infer<typeof answerSource>;
 export const askResponse = z.object({
   answered: z.boolean(),
   answer: z.string(),
-  sources: z.array(z.object({ policy_id: id, title: z.string(), version: z.number() })),
+  sources: z.array(answerSource),
   route_to_hr: z.boolean(),
   note: z.string(),
+  outcome: z.string().default("answered"),
+  answered_via: z.string().nullable().default(null),
+  smart_search_unavailable: z.boolean().default(false),
+  query_id: id.nullable().default(null),
 });
 export type AskResponse = z.infer<typeof askResponse>;
 export const askAssistant = (question: string) =>
   apiFetch("/api/v1/assistant/ask", askResponse, post({ question }));
+export const unansweredItem = z.object({
+  id: id.optional(),
+  question: z.string(),
+  asked_at: z.string(),
+});
 export const listUnanswered = () =>
+  apiFetch("/api/v1/assistant/unanswered", z.array(unansweredItem));
+export const faqFromUnanswered = (queryId: string) =>
+  apiFetch(`/api/v1/assistant/unanswered/${queryId}/faq-draft`, policy, post());
+
+export const sendAnswerFeedback = (body: { query_id: string; helpful: boolean; comment?: string }) =>
   apiFetch(
-    "/api/v1/assistant/unanswered",
-    z.array(z.object({ question: z.string(), asked_at: z.string() })),
+    "/api/v1/assistant/feedback",
+    z.object({ id, query_id: id, helpful: z.boolean() }),
+    post(body),
   );
+
+export const hrQuestion = z.object({
+  id,
+  question: z.string(),
+  contact_preference: z.string(),
+  status: z.enum(["open", "answered", "closed"]),
+  answer: z.string().nullable(),
+  answered_at: z.string().nullable(),
+  created_at: z.string(),
+});
+export type HrQuestion = z.infer<typeof hrQuestion>;
+export const hrInboxItem = hrQuestion.extend({
+  asked_by: id,
+  asked_by_name: z.string().nullable(),
+  asked_by_email: z.string().nullable(),
+});
+export type HrInboxItem = z.infer<typeof hrInboxItem>;
+/* idempotencyKey makes a double-click or a retry create ONE question. */
+export const escalateToHr = (
+  body: { question: string; contact_preference: "in_app" | "email" },
+  idempotencyKey: string,
+) =>
+  apiFetch("/api/v1/assistant/escalate", hrQuestion, {
+    ...post(body),
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+export const listMyHrQuestions = () =>
+  apiFetch("/api/v1/assistant/my-questions", z.array(hrQuestion));
+export const listHrInbox = (status?: "open" | "answered" | "closed") =>
+  apiFetch(`/api/v1/hr-questions${status ? `?status=${status}` : ""}`, z.array(hrInboxItem));
+export const answerHrQuestion = (questionId: string, answer: string) =>
+  apiFetch(`/api/v1/hr-questions/${questionId}/answer`, hrInboxItem, post({ answer }));
+export const closeHrQuestion = (questionId: string) =>
+  apiFetch(`/api/v1/hr-questions/${questionId}/close`, hrInboxItem, post());
+export const faqFromHrQuestion = (questionId: string) =>
+  apiFetch(`/api/v1/hr-questions/${questionId}/faq-draft`, policy, post());
+
+const questionCount = z.object({ question: z.string(), count: z.number() });
+export const assistantInsights = z.object({
+  period_days: z.number(),
+  total_questions: z.number(),
+  answered: z.number(),
+  not_found: z.number(),
+  self_service: z.number(),
+  guardrail_blocked: z.number(),
+  by_backend: z.record(z.number()),
+  helpful: z.number(),
+  not_helpful: z.number(),
+  not_helpful_rate: z.number().nullable(),
+  top_questions: z.array(questionCount),
+  top_unanswered: z.array(questionCount),
+  open_hr_questions: z.number(),
+  review_due: z.array(
+    z.object({ policy_id: id, title: z.string(), version: z.number(), review_due_date: z.string() }),
+  ),
+});
+export type AssistantInsights = z.infer<typeof assistantInsights>;
+export const getAssistantInsights = (days = 30) =>
+  apiFetch(`/api/v1/assistant/insights?days=${days}`, assistantInsights);
 
 // ------------------------------------------------------ interview confirmation
 

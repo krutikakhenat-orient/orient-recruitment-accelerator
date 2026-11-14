@@ -8,6 +8,10 @@ Event shapes:
     {"action": "migrate_and_seed"}  both, in order
     {"action": "purge_recordings"}  delete AI-interview video evidence past its retention date
                                     (audited). Run daily, e.g. from an EventBridge schedule.
+    {"action": "kb_index_poll"}     HR policy chatbot: update index status, start queued syncs.
+                                    Run every few minutes.
+    {"action": "kb_reconcile"}      HR policy chatbot: repair approved/ vs approved policies.
+                                    Run nightly.
 
 Security: the event carries no secrets and no SQL; actions are a closed whitelist.
 """
@@ -19,7 +23,9 @@ import pathlib
 import tempfile
 from typing import Any
 
-_ACTIONS = {"migrate", "seed", "migrate_and_seed", "purge_recordings"}
+_ACTIONS = {
+    "migrate", "seed", "migrate_and_seed", "purge_recordings", "kb_index_poll", "kb_reconcile",
+}
 _SEED_VIDEO_KEY = "_seed/induction-video.mp4"
 
 
@@ -104,6 +110,14 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, str]:
         results.append(_migrate())
     if action == "purge_recordings":
         results.append(_purge_recordings())
+    if action == "kb_index_poll":
+        from app.modules.knowledge_base.jobs import run_index_poll
+
+        results.append(run_index_poll())
+    if action == "kb_reconcile":
+        from app.modules.knowledge_base.jobs import run_reconcile
+
+        results.append(run_reconcile())
     if action in {"seed", "migrate_and_seed"}:
         results.append(_seed())
     return {"status": "ok", "result": "; ".join(results)}

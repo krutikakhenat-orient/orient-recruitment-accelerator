@@ -22,6 +22,7 @@ condensed form; each can be expanded into its own file as it is revisited. All a
 | 0014 | Notification abstraction | Provider-neutral email adapter; MailHog local; template versioning + delivery logs. |
 | 0015 | Talent-pool consent | Separate explicit opt-in distinct from application consent; withdrawable. |
 | 0016 | Multi-tenancy deferral | Single-org MVP; organisation key carried on every table so SaaS isolation can be added. |
+| 0017 | HR policy chatbot retrieval | See ADR-0017-hr-policy-chatbot-bedrock-kb.md. Bedrock KB + S3 Vectors, Retrieve then Converse (India-only Haiku profile), keyword fallback by default. |
 
 ## Open decisions (see docs/open-decisions.md)
 Field-level encryption mechanism; audit tamper-evidence upgrade (WORM); re-evaluation
